@@ -200,6 +200,25 @@ python dj.py
     The hook's words show on the DJ page. If the current song is nearly over it happens on the
     next one; at most once every 15 minutes.
 
+15. **Birthday at midnight:** the birthday block is always at 12 midnight, whatever time you
+    click START. A countdown shows on the DJ page, the big screen and guests' phones, and the
+    DJ calls it out at 10 and 5 minutes to go.
+16. **Guests' phones** can also dedicate a request ("for Ketan"), send a birthday wish that the
+    DJ reads out between songs (rude words are refused; press *Don't read* on the DJ page to
+    drop one), and tap 👍 on the song that's playing. The DJ leans towards the singers and eras
+    people like.
+17. **📺 Big screen:** a full-screen view for a TV with now playing, the countdown, the QR code,
+    the request queue and wishes. On the Mac press 📺 Big screen; a smart TV on the same Wi-Fi
+    can open `http://<the Mac's Wi-Fi address>:8765/tv` (the QR code shows that address).
+18. **Safety net:** if a song won't play or gets stuck, the DJ moves on. If the internet drops,
+    the page says so and carries on by itself when it's back, without burning through songs.
+    If the DJ program or the laptop restarts mid-party, run `python dj.py` again: it offers to
+    pick up where it stopped, with no repeats and the same birthday time. Press
+    ▶ CONTINUE THE PARTY on the page.
+19. **📜 Party recap:** every song, who requested what, the crowd favourites and the wishes.
+    Open it any time with the 📜 Party recap button; it's also saved as `party_recap.html` when
+    you stop the DJ.
+
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the
 same thing as `python dj.py`.)

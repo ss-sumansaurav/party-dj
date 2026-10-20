@@ -34,8 +34,13 @@ PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
 GUEST_PORT = 8766          # request page only, for the public link
 PUBLIC = {"url": None}     # the public link, once it's open
-DANCE_CALL_GAP = 20 * 60
-SINGALONG_GAP = 15 * 60       # at most one sing-along drop every 15 minutes   # seconds between "come to the dance floor" call-outs
+TV_PATHS = ("/tv", "/api/tv", "/qr.svg")  # the big screen can be a TV on the Wi-Fi
+DANCE_CALL_GAP = 20 * 60       # seconds between "come to the dance floor" call-outs
+SINGALONG_GAP = 15 * 60       # at most one sing-along drop every 15 minutes
+STATE_FILE = Path(".cache/party_state.json")  # where the party is up to, for picking up after a crash
+RECAP_FILE = Path("party_recap.html")
+WISH_MAX = 140                 # characters in a guest's birthday wish
+WISHES_PER_PHONE = 5
 TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2"}
 
 
@@ -45,6 +50,34 @@ def clean_name(name: str) -> str:
     name = re.sub(r"[^\w\u0900-\u097F .'-]", "", name, flags=re.UNICODE)
     name = " ".join(re.sub(r"[\d_]", "", name).split())[:24]
     return "" if title_looks_explicit(name) else name
+
+
+def clean_wish(text: str) -> str:
+    """A guest's birthday wish, safe to show and read out: plain text, one line, short."""
+    text = re.sub(r"<[^>]*>", "", text)
+    text = re.sub(r"https?://\S+|www\.\S+", "", text)
+    text = " ".join(re.sub(r"[^\w\u0900-\u097F\s.,!?'&:()❤️🎂🎉🥳-]", "", text, flags=re.UNICODE).split())
+    return text[:WISH_MAX]
+
+
+def birthday_time(started: dt.datetime) -> dt.datetime:
+    """The birthday block is at 12 midnight, whatever time the party starts. If the party only
+    starts after midnight, it comes 5 minutes in."""
+    if started.hour >= 12:
+        return dt.datetime.combine(started.date() + dt.timedelta(days=1), dt.time(0, 0))
+    return started + dt.timedelta(minutes=5)
+
+
+def saved_party(cfg) -> dict | None:
+    """Tonight's party as it was when the DJ last stopped, if it stopped less than 30 minutes ago."""
+    try:
+        st = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        saved = dt.datetime.fromisoformat(st["saved"])
+    except (OSError, ValueError, KeyError):
+        return None
+    if st.get("party") != str(cfg.party_date) or dt.datetime.now() - saved > dt.timedelta(minutes=30):
+        return None
+    return st
 
 
 def who_all(names: list[str]) -> str:
@@ -144,6 +177,13 @@ class Director:
         self.last_singalong = -SINGALONG_GAP
         self.n_sing = 0
         self._search_yt = None                # signed-out client just for guest searches
+        self.history: list[dict] = []         # every song played tonight, for the recap
+        self.wishes: list[dict] = []          # guests' birthday wishes; the host approves each one
+        self.say_queue: list[dict] = []       # lines to say straight away (countdown)
+        self.n_say = 0
+        self.countdown_said: set[str] = set()
+        self.likes: dict[str, set] = {}       # song key -> phones that tapped 👍
+        self.liked: dict[str, int] = {}       # artist or era -> how much guests liked it
         self.fx: list[str] = []             # scratch sounds made at start-up
         self.rng = random.Random(f"{cfg.party_date}-fx")
         self.next_vibe: dt.datetime | None = None
@@ -194,6 +234,10 @@ class Director:
 
     def phase_now(self) -> str:
         m = self.elapsed_min()
+        if self.birthday_at:  # phases follow the clock around midnight, not the start time
+            m = self.cfg.birthday_offset_minutes - (self.birthday_at - dt.datetime.now()).total_seconds() / 60
+        if m < 0:  # started early: keep warming up
+            return "Warm-up"
         for ph in self.plan.phases:
             if ph.start <= m < ph.end and ph.name != "Birthday":
                 return ph.name
@@ -217,11 +261,11 @@ class Director:
         phase = self.phase_now()
         planned = [s.song for s in self.slots if s.phase == phase and self.playable(s.song)]
         if planned:
-            return planned[0]
+            return self.lean(planned)
         energies = PHASE_RULES[phase]["energies"]
         fits = [s for s in self.everything if self.playable(s) and s.energy in energies]
         if fits:
-            return fits[0]
+            return self.lean(fits)
         rest = [s for s in self.everything if self.playable(s)]
         return rest[0] if rest else None
 
@@ -259,6 +303,7 @@ class Director:
             announce: list = []
             reason = None
             song = None
+            names, to = [], ""
             if self.birthday_state == "due":
                 song = next((s.song for s in self.slots if s.song.full), None)
                 self.birthday_state = "playing"
@@ -279,7 +324,8 @@ class Director:
                 if why == "request":
                     self.inserts.pop(0)
                 elif why == "guest":
-                    names = self.guest_reqs.pop(song.key)["names"]
+                    r = self.guest_reqs.pop(song.key)
+                    names, to = r["names"], r.get("to", "")
                 elif why in ("boost", "hold"):
                     self.one_shot_tier = None
             if song is None:
@@ -295,7 +341,8 @@ class Director:
                 announce += [a] if a else []
                 self.since_announce = 0
             elif reason == "guest" and not announce:
-                a = self.speak("guest_request", self.writer.line("guest_request", song.title, who=who(names)))
+                kind = "dedication" if to else "guest_request"
+                a = self.speak(kind, self.writer.line(kind, song.title, who=who(names), to=to))
                 announce += [a] if a else []
                 self.since_announce = 0
             elif reason == "request" and not announce:
@@ -309,6 +356,15 @@ class Director:
                     a = self.speak("dance_floor", self.writer.line("dance_floor", song.title))
                     announce += [a] if a else []
                     self.since_announce = 0
+            elif self.next_wish() and not announce and not song.full:
+                w = self.next_wish()
+                w["status"] = "said"
+                a = self.speak("wish", self.rng.choice([
+                    f"Got a birthday message for {self.cfg.birthday_person_name} from {w['name']}. {w['text']}",
+                    f"{w['name']} says: {w['text']} Happy birthday, {self.cfg.birthday_person_name}!",
+                ]))
+                announce += [a] if a else []
+                self.since_announce = 0
             elif not announce:
                 self.since_announce += 1
                 closing_time = self.elapsed_min() >= self.cfg.duration_minutes - 4
@@ -322,6 +378,10 @@ class Director:
                     announce += [a] if a else []
                     self.since_announce = 0
             print(f"{dt.datetime.now():%I:%M %p}  ▶ {song.label()}  [{TIERS[song.energy]}]")
+            self.history.append({"time": dt.datetime.now().strftime("%I:%M %p").lstrip("0"), "key": song.key,
+                                 "title": song.title, "artist": song.lead_artist, "energy": song.energy,
+                                 "reason": reason or "", "who": who_all(names) if names else "", "to": to})
+            self.save_state()
             sing = None
             if self.singalong_pending and not song.full:
                 self.singalong_pending = False
@@ -336,6 +396,146 @@ class Director:
                 "full": song.full, "announce": announce, "req": reason in ("guest", "request"),
                 "fx": self.pick_fx(prev, song, reason), "sing": sing,
             }
+
+    # ---------- picking up after a crash ----------
+    def save_state(self):
+        st = {"party": str(self.cfg.party_date), "saved": dt.datetime.now().isoformat(timespec="seconds"),
+              "started": self.started.isoformat() if self.started else None,
+              "birthday_at": self.birthday_at.isoformat() if self.birthday_at else None,
+              "birthday_state": "pending" if self.birthday_state == "due" else self.birthday_state,
+              "played": sorted(self.played), "history": self.history, "opened": self.opened,
+              "closing_done": self.closing_done, "countdown_said": sorted(self.countdown_said)}
+        try:
+            STATE_FILE.parent.mkdir(exist_ok=True)
+            tmp = STATE_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(st), encoding="utf-8")
+            tmp.replace(STATE_FILE)
+        except OSError:
+            pass
+
+    def resume(self, st: dict):
+        """Carry on tonight's party after the DJ was closed or crashed: same start time, same
+        birthday time, and no repeats of what already played."""
+        with self.lock:
+            self.started = dt.datetime.fromisoformat(st["started"]) if st.get("started") else None
+            self.birthday_at = dt.datetime.fromisoformat(st["birthday_at"]) if st.get("birthday_at") else None
+            self.birthday_state = st.get("birthday_state", "pending")
+            if self.birthday_state == "playing":
+                self.birthday_state = "done"
+            self.played = set(st.get("played", []))
+            self.history = st.get("history", [])
+            self.opened = st.get("opened", False)
+            self.closing_done = st.get("closing_done", False)
+            self.countdown_said = set(st.get("countdown_said", []))
+            if self.started:
+                self.next_vibe = dt.datetime.now() + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
+        self.notice(f"↩️ Picked up the party where it stopped ({len(self.history)} songs played so far).")
+
+    # ---------- things to say straight away ----------
+    def say_now(self, kind: str, text: str):
+        a = self.speak(kind, text)
+        if a:
+            with self.lock:
+                self.n_say += 1
+                self.say_queue = (self.say_queue + [dict(a, id=self.n_say)])[-5:]
+
+    def birthday_in(self) -> int | None:
+        """Seconds to the birthday block, while it's still to come."""
+        if self.started and self.birthday_at and self.birthday_state == "pending":
+            return max(0, int((self.birthday_at - dt.datetime.now()).total_seconds()))
+        return None
+
+    # ---------- guests' birthday wishes ----------
+    def guest_wish(self, name: str, text: str, ip: str) -> tuple[bool, str]:
+        name, text = clean_name(name), clean_wish(text)
+        if not name:
+            return False, "Please write your name."
+        if len(text) < 3:
+            return False, "Write your wish first."
+        if title_looks_explicit(text):
+            return False, "Let's keep it party-friendly! Try different words."
+        with self.lock:
+            if sum(w["ip"] == ip for w in self.wishes) >= WISHES_PER_PHONE:
+                return False, "You've sent lots of wishes already. Thank you! 💖"
+            self.wishes.append({"id": len(self.wishes) + 1, "name": name, "text": text, "ip": ip,
+                                "status": "ok", "at": dt.datetime.now().strftime("%I:%M %p").lstrip("0")})
+        self.notice(f"💌 Birthday wish from {name}: the DJ reads it out between songs.")
+        return True, f"Thanks {name}! The DJ will read it out soon 💌"
+
+    def review_wish(self, wish_id: str, ok: bool):
+        with self.lock:
+            for w in self.wishes:
+                if str(w["id"]) == wish_id and w["status"] == "ok" and not ok:
+                    w["status"] = "no"
+
+    def next_wish(self) -> dict | None:
+        return next((w for w in self.wishes if w["status"] == "ok"), None)
+
+    def wishes_view(self, statuses=("ok",)) -> list[dict]:
+        with self.lock:
+            return [{k: w[k] for k in ("id", "name", "text", "status", "at")} for w in self.wishes
+                    if w["status"] in statuses]
+
+    # ---------- guests' 👍 on the song that's playing ----------
+    def like(self, ip: str) -> tuple[bool, str]:
+        with self.lock:
+            cur = self.current
+            if not cur:
+                return False, "Nothing's playing yet."
+            fans = self.likes.setdefault(cur.key, set())
+            if ip in fans:
+                return False, "You already liked this one 👍"
+            fans.add(ip)
+            for h in reversed(self.history):
+                if h["key"] == cur.key:
+                    h["likes"] = len(fans)
+                    break
+            # Lean towards what the room likes: same singers and the same era.
+            for k in (cur.lead_artist, cur.era):
+                self.liked[k] = self.liked.get(k, 0) + 1
+        return True, "👍 Liked! The DJ will play more like this."
+
+    def lean(self, songs: list[Song]) -> Song | None:
+        """Of the next few candidates, the one most like what guests have 👍'd."""
+        if not songs or not self.liked:
+            return songs[0] if songs else None
+        few = songs[:5]
+        return max(few, key=lambda s: (self.liked.get(s.lead_artist, 0) * 2 + self.liked.get(s.era, 0), -few.index(s)))
+
+    # ---------- the party recap ----------
+    def recap_html(self) -> str:
+        e = html.escape
+        with self.lock:
+            hist = list(self.history)
+            wishes = [w for w in self.wishes if w["status"] == "said"]
+            scores = list(self.scores)
+        reqs = [h for h in hist if h["reason"] in ("guest", "request")]
+        fans: dict[str, int] = {}
+        for h in reqs:
+            for n in (h["who"] or "").replace(" and ", ", ").split(", "):
+                if n:
+                    fans[n] = fans.get(n, 0) + 1
+        top = sorted((h for h in hist if h.get("likes")), key=lambda h: -h["likes"])[:5]
+        rows = "".join(
+            f"<tr><td>{e(h['time'])}</td><td><b>{e(h['title'])}</b><br><small>{e(h['artist'])}</small></td>"
+            f"<td>{'●' * h.get('energy', 3)}</td><td>{e(h['who']) + (' → ' + e(h['to']) if h.get('to') else '') if h['who'] else ''}"
+            f"{'🎂' if h['reason'] == 'birthday' else ''}</td><td>{'👍 ' + str(h['likes']) if h.get('likes') else ''}</td></tr>"
+            for h in hist)
+        name = e(self.cfg.birthday_person_name)
+        avg = f"{sum(scores) / len(scores):.1f} / 5" if scores else "not scored"
+        return RECAP_PAGE.replace("__NAME__", name).replace("__BODY__", f"""
+<div class="stats"><div><b>{len(hist)}</b>songs played</div><div><b>{len(reqs)}</b>requests</div>
+<div><b>{len(wishes)}</b>wishes read out</div><div><b>{e(avg)}</b>average vibe</div></div>
+{"<h2>🙋 Top requesters</h2><p>" + ", ".join(f"{e(n)} ({c})" for n, c in sorted(fans.items(), key=lambda x: -x[1])[:8]) + "</p>" if fans else ""}
+{"<h2>👍 Crowd favourites</h2><ol>" + "".join(f"<li>{e(h['title'])} <small>👍 {h['likes']}</small></li>" for h in top) + "</ol>" if top else ""}
+{"<h2>💌 Birthday wishes</h2>" + "".join(f"<p class='wish'>“{e(w['text'])}”<br><small>{e(w['name'])}</small></p>" for w in wishes) if wishes else ""}
+<h2>🎵 Every song tonight</h2><table><tr><th>Time</th><th>Song</th><th>Energy</th><th>Requested by</th><th></th></tr>{rows}</table>""")
+
+    def write_recap(self) -> Path | None:
+        if not self.history:
+            return None
+        RECAP_FILE.write_text(self.recap_html(), encoding="utf-8")
+        return RECAP_FILE
 
     def pick_fx(self, prev: Song | None, song: Song, reason: str | None) -> str:
         """How to mix into the next song. Mostly a smooth blend; now and then a trance-style
@@ -524,7 +724,7 @@ class Director:
         self.log_request(match, "the host")
         self.notice(f"🙋 Request '{match.title}' " + ("is coming up now." if self.request_now() else "plays next."))
 
-    def guest_request(self, name: str, text: str, ip: str) -> tuple[bool, str]:
+    def guest_request(self, name: str, text: str, ip: str, to: str = "") -> tuple[bool, str]:
         """A request from a guest's phone. The most-requested song plays first; on a tie,
         the one asked for first."""
         name = clean_name(name)
@@ -547,6 +747,9 @@ class Director:
             r["ips"].add(ip)
             if name not in r["names"]:
                 r["names"].append(name)
+            to = clean_name(to)
+            if to and not r.get("to"):
+                r["to"] = to
             self.played.discard(song.key)
             pos = [q["song"].key for q in self.guest_queue()].index(song.key) + 1
         others = len(r["names"]) - 1
@@ -562,7 +765,7 @@ class Director:
     def queue_view(self) -> list[dict]:
         with self.lock:
             return [{"title": r["song"].title, "artist": r["song"].lead_artist, "count": len(r["names"]),
-                     "who": who(r["names"])} for r in self.guest_queue()][:10]
+                     "who": who(r["names"]), "to": r.get("to", "")} for r in self.guest_queue()][:10]
 
     def request_now(self) -> bool:
         """Mix into the request straight away, unless a request or the birthday song is playing."""
@@ -665,6 +868,11 @@ class Director:
         with self.lock:
             if not self.started:
                 return
+            left = self.birthday_in()
+            due = [m for m in (10, 5) if left is not None and m * 60 - 90 < left <= m * 60
+                   and f"cake_{m}" not in self.countdown_said]
+            for m in due:
+                self.countdown_said.add(f"cake_{m}")
             if self.birthday_state == "pending" and self.birthday_at and now >= self.birthday_at:
                 self.birthday_state = "due"
                 self.force_next = True
@@ -673,16 +881,15 @@ class Director:
                 self.next_vibe = now + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
                 self.vibe_due = not self.cam_on
                 print("\a  📊 Vibe check! Tap a score on the DJ page.")
+        for m in due:  # outside the lock: making the voice takes a moment
+            self.say_now(f"cake_{m}", self.writer.line(f"cake_{m}"))
 
     def begin(self):
         with self.lock:
             if self.started:
                 return
             self.started = dt.datetime.now()
-            if self.started.date() == self.cfg.start.date():
-                self.birthday_at = self.cfg.start + dt.timedelta(minutes=self.cfg.birthday_offset_minutes)
-            else:  # rehearsal on another day: same gap from the start
-                self.birthday_at = self.started + dt.timedelta(minutes=self.cfg.birthday_offset_minutes)
+            self.birthday_at = birthday_time(self.started)
             self.next_vibe = self.started + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
         print(f"\n🎉 Party started {self.started:%I:%M %p}. Birthday block at {self.birthday_at:%I:%M %p}.\n")
 
@@ -695,13 +902,35 @@ class Director:
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
                 "up_next": self.up_next(), "queue": self.queue_view(), "guest_url": guest_url(),
-                "singalong": self.singalong,
+                "singalong": self.singalong, "say": self.say_queue, "birthday_in": self.birthday_in(),
+                "likes": len(self.likes.get(self.current.key, ())) if self.current else 0,
+                "wishes": self.wishes_view(("ok",)), "now": self.state_now(),
             }
+
+    def tv_state(self) -> dict:
+        """What the big screen shows: nothing that controls the DJ."""
+        st = self.state_view()
+        st["wishes"] = self.wishes_view(("said",))[-2:]
+        return st
+
+    def state_view(self) -> dict:
+        with self.lock:
+            return {"now": self.state_now(), "up_next": self.up_next(), "queue": self.queue_view(),
+                    "guest_url": guest_url(), "birthday_in": self.birthday_in(), "started": bool(self.started),
+                    "likes": len(self.likes.get(self.current.key, ())) if self.current else 0}
+
+    def state_now(self) -> dict | None:
+        if not self.current:
+            return None
+        h = self.history[-1] if self.history else {}
+        return {"title": self.current.title, "artist": self.current.lead_artist,
+                "who": h.get("who", ""), "to": h.get("to", "")}
 
 
 def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
     title = html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party DJ")
     page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds)).replace("__TITLE__", title)
+    tv_page = TV_PAGE.replace("__TITLE__", html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party"))
     guest_page = GUEST_PAGE.replace("__TITLE__", html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party"))
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -720,16 +949,25 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
         def _guest(self, method: str, u) -> bool:
             """Guests' phones reach only the request page; everything else is for this device."""
             ip = (self.headers.get("Cf-Connecting-Ip") or "public") if self.public else self.client_address[0]
-            if not self.public and (ip.startswith("127.") or ip == "::1"):
-                if not (u.path in ("/req", "/api/queue") or (method == "POST" and u.path == "/api/req")):
-                    return False
+            guest_paths = ("/req", "/api/queue") if method == "GET" else ("/api/req", "/api/wish", "/api/like")
+            if not self.public and (ip.startswith("127.") or ip == "::1" or u.path in TV_PATHS):
+                if u.path not in guest_paths:
+                    return False  # this device (or the big screen on the Wi-Fi)
+            q = urllib.parse.parse_qs(u.query)
+            arg = lambda k: q.get(k, [""])[0]
             if method == "GET" and u.path == "/req":
                 self._send(200, guest_page.encode())
             elif method == "GET" and u.path == "/api/queue":
-                self._json({"queue": director.queue_view(), "now": director.current.title if director.current else None})
+                st = director.state_view()
+                self._json({"queue": st["queue"], "now": st["now"], "likes": st["likes"], "birthday_in": st["birthday_in"]})
             elif method == "POST" and u.path == "/api/req":
-                q = urllib.parse.parse_qs(u.query)
-                ok, msg = director.guest_request(q.get("name", [""])[0], q.get("song", [""])[0], ip)
+                ok, msg = director.guest_request(arg("name"), arg("song"), ip, arg("to"))
+                self._json({"ok": ok, "msg": msg})
+            elif method == "POST" and u.path == "/api/wish":
+                ok, msg = director.guest_wish(arg("name"), arg("msg"), ip)
+                self._json({"ok": ok, "msg": msg})
+            elif method == "POST" and u.path == "/api/like":
+                ok, msg = director.like(ip)
                 self._json({"ok": ok, "msg": msg})
             else:
                 self._send(403, b"This page is only for the DJ's device.", "text/plain")
@@ -743,6 +981,12 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return
             if u.path == "/state":
                 return self._json(director.state())
+            if u.path == "/tv":
+                return self._send(200, tv_page.encode())
+            if u.path == "/api/tv":
+                return self._json(director.tv_state())
+            if u.path == "/recap":
+                return self._send(200, director.recap_html().encode())
             if u.path == "/qr.svg":
                 return self._send(200, qr_svg(guest_url() or ""), "image/svg+xml")
             if u.path.startswith("/audio/"):
@@ -772,6 +1016,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 director.set_mode(arg)
             elif u.path == "/score" and arg.isdigit() and 1 <= int(arg) <= 5:
                 director.add_score(int(arg), "camera" if q.get("src") == ["cam"] else "host")
+            elif u.path == "/wish":
+                director.review_wish(arg, q.get("ok") == ["1"])
             elif u.path == "/singalong":
                 director.singalong_done(arg, q.get("ok") == ["1"])
             elif u.path == "/putback":
@@ -822,10 +1068,12 @@ def open_public_link(director: Director):
 
 
 def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: str = "songs.yaml",
-        open_browser: bool = True, on_ready=None, public: bool = True):
+        open_browser: bool = True, on_ready=None, public: bool = True, resume: dict | None = None):
     AUDIO_DIR.mkdir(exist_ok=True)
     director = Director(cfg, yt, plan, playlist_link, config_path)
     director.prepare()
+    if resume:
+        director.resume(resume)
     book = Songbook(songs_path, yt, director)
     book.page_title = f"{cfg.birthday_person_name}'s party songs"
     url = serve(director, book, public)
@@ -836,7 +1084,16 @@ def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: 
     print(f"\nThe DJ page is open: {url}")
     print("Click the big START button on it. Keep this window and that page open all night.")
     print("Press Ctrl-C here to finish.\n")
-    last_reload = time.monotonic()
+    try:
+        _keep_going(director, cfg)
+    finally:
+        recap = director.write_recap()
+        if recap:
+            print(f"\n📜 Party recap saved: {recap.resolve()}  (open it in the browser)")
+
+
+def _keep_going(director: Director, cfg):
+    last_reload = last_recap = time.monotonic()
     end = None
     while True:
         director.tick()
@@ -848,6 +1105,9 @@ def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: 
         if time.monotonic() - last_reload > 60:
             last_reload = time.monotonic()
             director.reload_config()
+        if time.monotonic() - last_recap > 300:  # keep a fresh copy in case the laptop dies
+            last_recap = time.monotonic()
+            director.write_recap()
         time.sleep(1)
 
 
@@ -885,6 +1145,11 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #sing{display:none;font-size:30px;font-weight:800;color:#ffd54f;margin:10px 0;animation:pulse .6s infinite alternate}
  #sing div{font-size:22px;color:var(--txt);font-weight:600}
  @keyframes pulse{to{transform:scale(1.06)}}
+ #countdown{font-size:22px;font-weight:800;color:#ffd54f;min-height:0} #reqby{color:#7cdb7c;margin-top:4px}
+ #likes{display:inline-block;margin-left:8px;color:#ffd54f}
+ #netdown{display:none;background:#e65100;padding:12px;border-radius:12px;margin:8px 0;font-size:18px}
+ .wish{border-bottom:1px solid #2a2a35;padding:8px 0} .wish small{color:var(--dim)}
+ .wish button{font-size:14px;padding:6px 10px;border-radius:8px;border:0;color:#fff;margin:6px 6px 0 0;cursor:pointer}
  .snd{display:block;margin-top:10px;color:var(--dim);font-size:14px} .snd span{float:right;color:var(--txt)}
  .snd input{width:100%;padding:0;accent-color:var(--pink)}
 </style></head><body><main>
@@ -897,9 +1162,10 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="down">The DJ program isn't running. In Terminal run: <b>python dj.py</b></div>
 <button id="start">▶ START THE PARTY</button>
 <div id="players"><div id="p0"></div><div id="p1"></div></div>
+<div id="netdown">📡 The internet dropped. The DJ will carry on by itself as soon as it's back.</div>
 <div id="ui" hidden><div id="left">
- <div class="card"><div id="phase" style="color:var(--dim)"></div>
-  <div id="title">…</div><div id="artist"></div><div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div></div>
+ <div class="card"><div id="countdown"></div><div id="phase" style="color:var(--dim)"></div>
+  <div id="title">…</div><div id="artist"></div><div id="reqby"></div><div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div></div>
  <div class="card" id="camcard"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:center">
   <div style="flex:1;min-width:240px"><div style="font-size:22px;font-weight:700">📷 Crowd camera</div>
    <div id="camlabel" style="font-size:26px;font-weight:700;margin:10px 0;color:var(--pink)">Off</div>
@@ -921,7 +1187,9 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <button class="act" id="skip">⏭ Next song</button>
   <button class="act" id="hype">🎤 Hype the crowd</button>
   <button class="act" id="blk">🚫 Block this song</button>
-  <button class="act" id="blka">🚫 Block this artist</button></div>
+  <button class="act" id="blka">🚫 Block this artist</button>
+  <button class="act" onclick="window.open('/tv','dj-tv')">📺 Big screen</button>
+  <button class="act" onclick="window.open('/recap','dj-recap')">📜 Party recap</button></div>
  <div class="card"><b>Request a song</b><div style="margin-top:10px">
   <button class="act" id="mic" title="Say the song name">🎙 Speak</button>
   <input id="req" placeholder="Song name - Artist"> <button class="act" id="reqb">Add</button></div></div>
@@ -933,6 +1201,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <div id="qrurl" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
   <div style="color:var(--dim);font-size:12px;margin-top:4px">Guests need to be on the same Wi-Fi.</div></div>
  <div class="card"><b>🙋 Request queue</b><div style="color:var(--dim);font-size:12px">Most asked-for first, then whoever asked first</div><ol id="queue" style="text-align:left;padding-left:22px;margin:8px 0"></ol></div>
+ <div class="card" style="text-align:left"><b>💌 Birthday wishes coming up</b><div style="color:var(--dim);font-size:12px">From guests' phones. The DJ reads one out between songs; press Don't read to drop one.</div><div id="wishes"></div></div>
  <div class="card" style="text-align:left"><b>🎚 Sound</b>
   <label class="snd">Music volume <span id="vmusic"></span><input type="range" id="smusic" min="0" max="100"></label>
   <label class="snd">DJ voice volume <span id="vvoice"></span><input type="range" id="svoice" min="0" max="100"></label>
@@ -972,7 +1241,7 @@ async function talk(list, p){
 function onYouTubeIframeAPIReady(){
   for(const i of [0,1]) P[i] = new YT.Player('p'+i,{height:'180',width:'320',playerVars:{origin:location.origin,playsinline:1,controls:0,disablekb:1},
     events:{onReady:()=>{ const raw = P[i].setVolume.bind(P[i]);   // every level is scaled by the music volume
-              P[i].setVolume = v => { P[i]._v = v; raw(Math.round(v*SOUND.music/100)); }; ready++; }, onError:()=>{ if(i===active && cur) next(true); },
+              P[i].setVolume = v => { P[i]._v = v; raw(Math.round(v*SOUND.music/100)); }; ready++; }, onError:()=>{ if(i===active && cur) skipBroken(); },
             onStateChange:e=>{ if(i===active && e.data===YT.PlayerState.ENDED && !busy) next(false); }}});
 }
 async function fetchNext(err){ fetching=true; try{ upcoming = await post('/next'+(err?'?v=error':'')); } finally { fetching=false; } }
@@ -1005,13 +1274,36 @@ async function next(err){
       await Promise.all(fades);
     }
     if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
-  } catch(e){ console.log(e); } finally { busy=false; }
+  } catch(e){ console.log(e); retryLater(); } finally { busy=false; }
 }
+// ---- Safety net: never go quiet ----
+let errs = [], down = false, lastT = -1, lastMove = Date.now();
+function retryLater(){   // the DJ program didn't answer: try again shortly, unless music is still going
+  setTimeout(()=>{ const p = P[active]; const playing = p && p.getPlayerState && p.getPlayerState() === 1;
+    if(!busy && !stopped && !playing && !upcoming) next(false); }, 3000);
+}
+function netDown(on){ down = on; $('netdown').style.display = on ? 'block' : 'none'; }
+function skipBroken(){   // a song won't play: skip it, unless it looks like the internet is down
+  const now = Date.now(); errs = errs.filter(x => now - x < 30000); errs.push(now);
+  if(errs.length >= 3 || !navigator.onLine){ if(!down){ netDown(true); if(cur) post('/putback?v='+cur.vid).catch(()=>{}); } return; }
+  next(true);
+}
+setInterval(()=>{   // while the internet is down, try again every 10 seconds
+  if(!down || busy || !navigator.onLine) return;
+  errs = []; netDown(false); lastMove = Date.now(); next(false);
+}, 10000);
+window.addEventListener('online', ()=>{ if(down && !busy){ errs = []; netDown(false); lastMove = Date.now(); next(false); } });
+window.addEventListener('offline', ()=> netDown(true));
 setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
+  if(busy || stopped || down) lastMove = Date.now();   // only a playing song can get stuck
   if(!cur || busy || stopped) return; const p=P[active]; if(!p || !p.getCurrentTime) return;
   const t=p.getCurrentTime(), d=p.getDuration()||0, end=Math.min(cur.until, d ? d-0.5 : cur.until), left=end-t;
   if(d) $('fill').style.width=Math.min(100,100*(t-cur.start)/Math.max(1,end-cur.start))+'%';
-  if(singing) return;
+  if(Math.abs(t - lastT) > 0.05){ lastT = t; lastMove = Date.now(); }
+  else if(Date.now() - lastMove > 15000 && !down){   // stuck for 15 s: move on
+    lastMove = Date.now(); if(navigator.onLine){ toast('That song got stuck, moving on'); next(true); } else netDown(true); return; }
+  if(sayQ.length && !talking && !singing){ talking = true; const list = sayQ.splice(0); talk(list, p).finally(()=>{ talking = false; }); }
+  if(singing || talking) return;
   const sg = cur.sing;   // a sing-along drop is waiting: find the hook, then drop the music
   if(sg && t >= cur.start){
     if(sg.when === undefined){
@@ -1024,7 +1316,14 @@ setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
   if(left < PREP && !upcoming && !fetching) fetchNext(false);
   if(left < FADE && upcoming) next(false);
 }, 300);
-let singing = false, seenSing = 0;
+let singing = false, seenSing = 0, talking = false, sayQ = [], lastSay = 0, sayReady = false, bdayAt = null;
+window.wish = (id, ok) => post('/wish?v='+id+'&ok='+ok).then(()=>{ toast("That wish won't be read out"); load(); });
+function tickCountdown(){
+  if(bdayAt === null){ $('countdown').textContent = ''; return; }
+  const left = Math.max(0, Math.round((bdayAt - Date.now())/1000)), h = Math.floor(left/3600), m = Math.floor(left%3600/60), sec = left%60;
+  $('countdown').textContent = '🎂 Cake time in ' + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(sec).padStart(2,'0');
+}
+setInterval(tickCountdown, 1000);
 async function singAlong(sg, p){   // the crowd's on fire: music down, everybody sings the hook
   singing = true;
   try{
@@ -1059,6 +1358,14 @@ async function load(){
       $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
     if(s.force_next && cur) pendingForce = true;
     offerSing(s.singalong);
+    bdayAt = s.birthday_in === null ? null : Date.now() + s.birthday_in*1000; tickCountdown();
+    $('reqby').textContent = s.now && s.now.who ? '🙋 Requested by '+s.now.who+(s.now.to ? ' · for '+s.now.to : '') : '';
+    if(s.now && s.now.title === $('title').textContent) $('title').innerHTML = esc(s.now.title)+(s.likes ? '<span id="likes">👍 '+s.likes+'</span>' : '');
+    $('wishes').innerHTML = s.wishes.length ? s.wishes.map(w => `<div class="wish">“${esc(w.text)}”<br><small>${esc(w.name)} · ${esc(w.at)}</small><br>
+      <button style="background:#555" onclick="wish(${w.id},0)">✕ Don't read</button></div>`).join('')
+      : '<div style="color:var(--dim);padding:6px 0">No wishes waiting.</div>';
+    for(const a of s.say){ if(a.id > lastSay){ lastSay = a.id; if(sayReady) sayQ.push(a); } } sayReady = true;
+    if(s.started && $('start')) $('start').textContent = '▶ CONTINUE THE PARTY';
   } catch(e){ $('down').style.display='block'; }
 }
 setInterval(load, 1000); load();
@@ -1170,13 +1477,22 @@ GUEST_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #msg{min-height:24px;margin-top:12px;font-size:17px} .ok{color:#7cdb7c} .bad{color:#ff8a80}
  .q{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #2a2a35}
  .q div{flex:1} .q small{color:var(--dim)} .n{color:var(--pink);font-weight:700;width:26px}
+ #cd{font-size:22px;font-weight:800;color:#ffd54f;margin:6px 0}
 </style></head><body><main>
 <h1>🎉 __TITLE__</h1><div class="sub">Ask the DJ for a song!</div>
-<div id="now" class="sub"></div>
+<div id="cd"></div>
+<div class="card" id="nowcard" style="display:none;text-align:center"><div class="sub" style="margin:0">▶ Now playing</div>
+ <div id="now" style="font-size:20px;font-weight:700;margin:6px 0"></div>
+ <button id="like" class="small" style="font-size:18px;padding:10px 18px;background:#333">👍 Love this song</button> <span id="likes" style="color:var(--dim)"></span>
+ <div id="likemsg" style="color:var(--dim);font-size:14px;margin-top:6px"></div></div>
 <div class="card">
  <label for="name">Your name (the DJ will say it)</label><input id="name" maxlength="24" placeholder="e.g. Riya" autocomplete="given-name">
  <label for="song">Song</label><input id="song" maxlength="80" placeholder="Song name, and singer if you know">
+ <label for="to">Dedicate it to (optional)</label><input id="to" maxlength="24" placeholder="e.g. Ketan, or your bestie">
  <button id="go">🎶 Request it</button><div id="msg"></div></div>
+<div class="card"><b>💌 Send a birthday wish</b> <small style="color:var(--dim)">The DJ reads it out loud!</small>
+ <textarea id="wish" maxlength="140" rows="3" placeholder="Happy birthday! …" style="width:100%;font-size:17px;padding:12px;border-radius:12px;border:0;margin-top:10px;font-family:inherit"></textarea>
+ <button id="wishgo">💌 Send wish</button><div id="wishmsg" style="min-height:22px;margin-top:10px"></div></div>
 <div class="card"><b>Request queue</b> <small style="color:var(--dim)">Most asked-for plays first</small><div id="queue"></div></div>
 </main><script>
 const $ = id => document.getElementById(id);
@@ -1188,8 +1504,8 @@ async function ask(song){
   try { localStorage.setItem('dj-name', name); } catch(e){}
   $('go').disabled = true; $('msg').className=''; $('msg').textContent = 'Finding it…';
   try {
-    const r = await (await fetch('/api/req?'+new URLSearchParams({name, song}), {method:'POST'})).json();
-    $('msg').className = r.ok ? 'ok' : 'bad'; $('msg').textContent = r.msg; if(r.ok) $('song').value = '';
+    const r = await (await fetch('/api/req?'+new URLSearchParams({name, song, to: $('to').value.trim()}), {method:'POST'})).json();
+    $('msg').className = r.ok ? 'ok' : 'bad'; $('msg').textContent = r.msg; if(r.ok){ $('song').value = ''; $('to').value = ''; }
   } catch(e){ $('msg').className='bad'; $('msg').textContent = "The DJ isn't taking requests right now."; }
   $('go').disabled = false; load();
 }
@@ -1198,12 +1514,106 @@ $('song').onkeydown = e => { if(e.key==='Enter') $('go').click(); };
 async function load(){
   try {
     const r = await (await fetch('/api/queue')).json();
-    $('now').textContent = r.now ? '▶ Now playing: '+r.now : '';
+    $('nowcard').style.display = r.now ? 'block' : 'none';
+    if(r.now){ $('now').textContent = r.now.title; $('likes').textContent = r.likes ? r.likes+' 👍' : ''; }
+    bday = r.birthday_in === null ? null : Date.now() + r.birthday_in*1000; cd();
     $('queue').innerHTML = r.queue.length ? r.queue.map((q,i)=>`<div class="q"><span class="n">${i+1}</span><div>${esc(q.title)}<br>
-      <small>${esc(q.artist)} · asked by ${esc(q.who)}</small></div><button class="small" data-t="${esc(q.title)}">+ Me too</button></div>`).join('')
+      <small>${esc(q.artist)} · asked by ${esc(q.who)}${q.to ? ' · for '+esc(q.to) : ''}</small></div><button class="small" data-t="${esc(q.title)}">+ Me too</button></div>`).join('')
       : '<div style="color:var(--dim);padding:10px 0">No requests yet. Be the first!</div>';
     document.querySelectorAll('.small').forEach(b => b.onclick = () => ask(b.dataset.t));
   } catch(e){}
 }
+let bday = null;
+function cd(){
+  if(bday === null){ $('cd').textContent = ''; return; }
+  const left = Math.max(0, Math.round((bday - Date.now())/1000)), h = Math.floor(left/3600), m = Math.floor(left%3600/60), s = left%60;
+  $('cd').textContent = '🎂 Cake time in ' + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0');
+}
+setInterval(cd, 1000);
+$('like').onclick = async () => {
+  try { const r = await (await fetch('/api/like', {method:'POST'})).json(); $('likemsg').textContent = r.msg; load(); }
+  catch(e){ $('likemsg').textContent = "The DJ isn't taking likes right now."; }
+};
+$('wishgo').onclick = async () => {
+  const name = $('name').value.trim(), msg = $('wish').value.trim();
+  if(!name){ $('wishmsg').className='bad'; $('wishmsg').textContent='Please write your name above first.'; $('name').focus(); return; }
+  if(!msg){ $('wishmsg').className='bad'; $('wishmsg').textContent='Write your wish first.'; return; }
+  try { localStorage.setItem('dj-name', name); } catch(e){}
+  $('wishgo').disabled = true;
+  try { const r = await (await fetch('/api/wish?'+new URLSearchParams({name, msg}), {method:'POST'})).json();
+    $('wishmsg').className = r.ok ? 'ok' : 'bad'; $('wishmsg').textContent = r.msg; if(r.ok) $('wish').value = ''; }
+  catch(e){ $('wishmsg').className='bad'; $('wishmsg').textContent = "The DJ isn't taking wishes right now."; }
+  $('wishgo').disabled = false;
+};
 load(); setInterval(load, 5000);
 </script></body></html>"""
+
+
+
+TV_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>__TITLE__</title>
+<style>
+ :root{--bg:#0d0d12;--card:#1b1b24;--pink:#ff2d7a;--txt:#f4f4f8;--dim:#a0a0b0;--gold:#ffd54f}
+ *{box-sizing:border-box} html,body{height:100%} body{margin:0;font-family:-apple-system,system-ui,sans-serif;color:var(--txt);overflow:hidden;
+  background:radial-gradient(circle at 20% 20%,#3a0d2a,transparent 50%),radial-gradient(circle at 80% 80%,#0d2a3a,transparent 50%),var(--bg)}
+ main{display:grid;grid-template-columns:1.6fr 1fr;gap:3vh;padding:4vh 4vw;height:100%}
+ h1{font-size:6vh;margin:0 0 2vh;color:var(--pink)} .card{background:rgba(27,27,36,.85);border-radius:3vh;padding:3vh;margin-bottom:3vh}
+ .label{color:var(--dim);font-size:2.4vh;text-transform:uppercase;letter-spacing:.2em}
+ #title{font-size:8vh;font-weight:800;line-height:1.1;margin:1vh 0} #artist{font-size:3.6vh;color:var(--dim)}
+ #who{font-size:3.4vh;color:#7cdb7c;margin-top:1.5vh} #likes{font-size:3.4vh;color:var(--gold);margin-top:1vh}
+ #cd{font-size:7vh;font-weight:900;color:var(--gold)} #next{font-size:3.6vh;margin-top:1vh}
+ #qr{background:#fff;border-radius:2vh;padding:1.5vh;width:fit-content;margin:1.5vh auto} #qr img{width:24vh;height:24vh;display:block}
+ .side{text-align:center} ol{text-align:left;font-size:2.8vh;margin:1vh 0;padding-left:4vh} li{margin:.8vh 0} li small{color:var(--dim)}
+ .wish{font-size:3vh;font-style:italic;margin:1.5vh 0} .wish small{display:block;font-style:normal;color:var(--dim);font-size:2.2vh}
+ #fs{position:fixed;right:1.5vh;bottom:1.5vh;background:#333;color:#fff;border:0;border-radius:1vh;padding:1vh 2vh;font-size:2vh;opacity:.5;cursor:pointer}
+ @media (max-aspect-ratio:1/1){main{grid-template-columns:1fr} body{overflow:auto}}
+</style></head><body><main>
+<div><h1>🎉 __TITLE__</h1>
+ <div class="card" id="cdcard" style="display:none"><div class="label">Cake time in</div><div id="cd"></div></div>
+ <div class="card"><div class="label">▶ Now playing</div><div id="title">Getting ready…</div><div id="artist"></div><div id="who"></div><div id="likes"></div></div>
+ <div class="card"><div class="label">⏭ Up next</div><div id="next"></div></div>
+ <div class="card" id="wishcard" style="display:none"><div class="label">💌 Birthday wishes</div><div id="wishes"></div></div></div>
+<div class="side"><div class="card"><div class="label">📱 Scan to request a song</div><div id="qr"></div>
+  <div style="font-size:2.4vh;color:var(--dim)">Request a song, dedicate it, send a wish, or 👍 what's playing</div></div>
+ <div class="card"><div class="label">🙋 Request queue</div><ol id="queue"></ol></div></div>
+</main><button id="fs">⛶ Full screen</button><script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let bday = null, qr = null;
+$('fs').onclick = () => { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); $('fs').style.display = 'none'; };
+function cd(){
+  $('cdcard').style.display = bday === null ? 'none' : 'block'; if(bday === null) return;
+  const left = Math.max(0, Math.round((bday - Date.now())/1000)), h = Math.floor(left/3600), m = Math.floor(left%3600/60), s = left%60;
+  $('cd').textContent = (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0');
+}
+async function load(){
+  try {
+    const s = await (await fetch('/api/tv')).json();
+    if(s.now){ $('title').textContent = s.now.title; $('artist').textContent = s.now.artist;
+      $('who').textContent = s.now.who ? '🙋 Requested by '+s.now.who+(s.now.to ? ' · for '+s.now.to : '') : '';
+      $('likes').textContent = s.likes ? '👍 '+s.likes : ''; }
+    $('next').textContent = s.up_next ? s.up_next.title+' · '+s.up_next.artist : '';
+    $('queue').innerHTML = s.queue.length ? s.queue.slice(0,6).map(q=>'<li>'+esc(q.title)+' <small>· '+esc(q.who)+(q.to?' → '+esc(q.to):'')+'</small></li>').join('')
+      : '<li style="list-style:none;margin-left:-4vh;color:var(--dim)">Scan the code and be the first!</li>';
+    $('wishcard').style.display = s.wishes.length ? 'block' : 'none';
+    $('wishes').innerHTML = s.wishes.map(w => '<div class="wish">“'+esc(w.text)+'”<small>'+esc(w.name)+'</small></div>').join('');
+    if(s.guest_url && s.guest_url !== qr){ qr = s.guest_url; $('qr').innerHTML = '<img alt="QR code" src="/qr.svg?'+Date.now()+'">'; }
+    bday = s.birthday_in === null ? null : Date.now() + s.birthday_in*1000; cd();
+  } catch(e){}
+}
+load(); setInterval(load, 2000); setInterval(cd, 1000);
+</script></body></html>"""
+
+
+RECAP_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>__NAME__'s party recap</title>
+<style>
+ :root{--bg:#0d0d12;--card:#1b1b24;--pink:#ff2d7a;--txt:#f4f4f8;--dim:#a0a0b0}
+ body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+ main{max-width:860px;margin:auto;padding:20px} h1{color:var(--pink);text-align:center} h2{margin-top:28px}
+ .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+ .stats div{background:var(--card);border-radius:14px;padding:16px;text-align:center;color:var(--dim)} .stats b{display:block;font-size:30px;color:var(--txt)}
+ table{width:100%;border-collapse:collapse} th,td{padding:8px 6px;border-bottom:1px solid #2a2a35;text-align:left;vertical-align:top}
+ th{color:var(--dim);font-size:14px} small{color:var(--dim)} .wish{background:var(--card);border-radius:12px;padding:12px;font-style:italic}
+ .wish small{font-style:normal}
+</style></head><body><main><h1>🎉 __NAME__'s birthday party</h1>__BODY__</main></body></html>"""

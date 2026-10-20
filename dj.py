@@ -259,7 +259,13 @@ def cmd_party(cfg, args) -> int:
     if missing:
         print(f"{len(missing)} songs weren't found on YouTube Music and are left out.")
     try:
-        live.run(cfg, yt, plan, link, args.config, args.songs)
+        saved = live.saved_party(cfg)
+        resume = None
+        if saved and saved.get("started"):
+            played = len(saved.get("history", []))
+            if ask(f"The DJ stopped a few minutes ago after {played} songs. Pick up where it left off?"):
+                resume = saved
+        live.run(cfg, yt, plan, link, args.config, args.songs, resume=resume)
     except KeyboardInterrupt:
         print("\nParty over! Vibe scores are in mood_log.csv.")
     return 0

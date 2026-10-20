@@ -84,4 +84,4 @@ def _start(files_dir: str):
         _say("Ready")
 
     live.run(cfg, yt, plan, None, "config.yaml", "songs.yaml", open_browser=False, on_ready=ready,
-             public=False)  # Android can't run the tunnel program; guests use the Wi-Fi
+             public=False, resume=live.saved_party(cfg))  # Android can't run the tunnel program; guests use the Wi-Fi
