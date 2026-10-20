@@ -79,6 +79,7 @@ class Director:
         self.birthday_state = "pending"    # pending -> due -> playing -> done
         self.force_next = False
         self.vibe_due = False
+        self.cam_on = False                # crowd camera scores the vibe instead of the host
         self.next_vibe: dt.datetime | None = None
         self.since_announce = 0
         self.closing_done = False
@@ -285,13 +286,15 @@ class Director:
         label = TIERS.get(self.mode, "Auto (follow the plan)") if self.mode != "auto" else "Auto (follow the plan)"
         self.notice(f"Vibe set to {label}. It starts with the next song.")
 
-    def add_score(self, score: int):
+    def add_score(self, score: int, source: str = "host"):
         with self.lock:
             self.scores.append(score)
             self.vibe_due = False
             choice = decide(self.scores)
             cur = self.current
             decision = {"up": "energy up one tier", "hold": "hold the energy", "plan": "keep the plan"}[choice]
+            if source == "camera":
+                decision += " (crowd camera)"
             if choice == "up" and cur:
                 self.one_shot_tier = min(5, cur.energy + 1)
                 self.notice(f"Crowd's quiet. Next song goes up to {TIERS[self.one_shot_tier]}.")
@@ -299,6 +302,14 @@ class Director:
                 self.one_shot_tier = cur.energy
                 self.notice("Crowd's on fire 🔥 Holding the energy.")
         log_mood(score, cur.label() if cur else "", decision)
+
+    def set_cam(self, on: bool):
+        with self.lock:
+            self.cam_on = on
+            if on:
+                self.vibe_due = False
+        self.notice("📷 Crowd camera on: it scores the dance floor every 2 minutes." if on
+                    else "📷 Crowd camera off: back to asking you for vibe scores.")
 
     def request(self, text: str):
         text = text.strip()
@@ -378,7 +389,7 @@ class Director:
                 self.notice("🎂 Birthday time! The DJ is starting the birthday song.")
             if self.next_vibe and now >= self.next_vibe:
                 self.next_vibe = now + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
-                self.vibe_due = True
+                self.vibe_due = not self.cam_on
                 print("\a  📊 Vibe check! Tap a score on the DJ page.")
 
     def begin(self):
@@ -450,7 +461,9 @@ def serve(director: Director, songbook: Songbook) -> str:
             if u.path == "/mode":
                 director.set_mode(arg)
             elif u.path == "/score" and arg.isdigit() and 1 <= int(arg) <= 5:
-                director.add_score(int(arg))
+                director.add_score(int(arg), "camera" if q.get("src") == ["cam"] else "host")
+            elif u.path == "/cam":
+                director.set_cam(arg == "on")
             elif u.path == "/request":
                 threading.Thread(target=director.request, args=(arg,), daemon=True).start()
             elif u.path == "/block":
@@ -550,7 +563,13 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <input id="req" placeholder="Song name - Artist"> <button class="act" id="reqb">Add</button></div></div>
  <div class="card"><b>For you</b><div id="scores" style="color:var(--dim)"></div><ul id="notices"></ul></div>
 </div>
-<div id="side"><div class="card"><b>⏭ Up next</b><div id="nxtitle">…</div><div id="nxartist"></div></div></div>
+<div id="side"><div class="card"><b>⏭ Up next</b><div id="nxtitle">…</div><div id="nxartist"></div></div>
+ <div class="card"><b>📷 Crowd camera</b>
+  <div style="color:var(--dim);font-size:13px;margin:6px 0">Watches how much the room is moving and steers the music. Only a movement number is kept: no video or photos are saved or sent anywhere, and no faces are looked at.</div>
+  <button class="act" id="cam">Turn camera on</button>
+  <video id="camv" autoplay muted playsinline style="display:none;width:100%;border-radius:10px;margin-top:10px;transform:scaleX(-1)"></video>
+  <div id="cammeter" style="display:none"><div style="height:8px;background:#333;border-radius:4px;margin-top:8px;overflow:hidden"><div id="camfill" style="height:100%;width:0;background:#7cb342"></div></div>
+  <div id="camlabel" style="margin-top:6px;color:var(--dim)"></div></div></div></div>
 </div>
 <div id="overlay"><h2>📊 Vibe check! How's the crowd?</h2><div class="row">
  <button class="mode" style="background:#3949ab" onclick="score(1)">1<br><small>chill</small></button>
@@ -644,6 +663,38 @@ $('mic').onclick = ()=>{
   r.onerror = e=>{ toast(e.error==='not-allowed' ? 'Allow the microphone for this page, then try again' : "Didn't catch that, try again"); };
   r.onend = done; r.start();
 };
+// Crowd camera: compares tiny grey frames to measure movement. Nothing leaves this page.
+const CAM_EVERY = 120, CAM_LEVELS = [1.5, 3, 5, 8], CAM_NAMES = ['','Quiet','Swaying','Grooving','Dancing','Going wild'];
+let cam = null, camPrev = null, camHist = [], camTimer = null, camSend = null;
+const camCanvas = document.createElement('canvas'); camCanvas.width = 64; camCanvas.height = 48;
+const camCtx = camCanvas.getContext('2d', {willReadFrequently: true});
+const camScore = m => 1 + CAM_LEVELS.filter(t => m >= t).length;
+function camTick(){
+  camCtx.drawImage($('camv'), 0, 0, 64, 48);
+  const px = camCtx.getImageData(0, 0, 64, 48).data, g = new Float32Array(64*48);
+  for(let i=0;i<g.length;i++) g[i] = (px[4*i]+px[4*i+1]+px[4*i+2])/3;
+  if(camPrev){ let d=0; for(let i=0;i<g.length;i++) d += Math.abs(g[i]-camPrev[i]); camHist.push(d/g.length); }
+  camPrev = g; if(camHist.length > CAM_EVERY*2) camHist.shift();
+  const recent = camHist.slice(-20), m = recent.reduce((a,b)=>a+b,0)/Math.max(1,recent.length), sc = camScore(m);
+  $('camfill').style.width = Math.min(100, m/10*100)+'%'; $('camlabel').textContent = 'Right now: '+CAM_NAMES[sc]+' ('+sc+'/5)';
+}
+async function camOn(){
+  try { cam = await navigator.mediaDevices.getUserMedia({video:{width:320,height:240}, audio:false}); }
+  catch(e){ toast('Allow the camera for this page, then try again'); return; }
+  $('camv').srcObject = cam; $('camv').style.display='block'; $('cammeter').style.display='block';
+  $('cam').textContent = 'Turn camera off'; camHist = []; camPrev = null;
+  camTimer = setInterval(camTick, 500);
+  camSend = setInterval(()=>{ if(!camHist.length) return;
+    const avg = camHist.reduce((a,b)=>a+b,0)/camHist.length; camHist = [];
+    post('/score?src=cam&v='+camScore(avg)).then(load); }, CAM_EVERY*1000);
+  post('/cam?v=on').then(load);
+}
+function camOff(){
+  clearInterval(camTimer); clearInterval(camSend); if(cam) cam.getTracks().forEach(t=>t.stop()); cam = null;
+  $('camv').srcObject = null; $('camv').style.display='none'; $('cammeter').style.display='none';
+  $('cam').textContent = 'Turn camera on'; post('/cam?v=off').then(load);
+}
+$('cam').onclick = () => cam ? camOff() : camOn();
 $('skip').onclick = ()=>{ upcoming=null; next(false); };
 $('hype').onclick = async ()=>{ const r = await post('/hype'); talk(r.announce, P[active]); };
 $('blk').onclick = async ()=>{ const r = await post('/block?v=song'); if(r.skip){ upcoming=null; next(false);} load(); };

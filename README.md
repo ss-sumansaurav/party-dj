@@ -133,8 +133,14 @@ python dj.py
    intro and plays the birthday song in full, then the cake cue and the shout-out.
 8. **Vibe check** every 15 minutes: the page asks for a score from 1 to 5. Two scores of 1–2
    in a row lift the next song one energy level; two of 4–5 hold the energy. Scores go to
-   `mood_log.csv` on the Mac and nowhere else. No camera is used, and the microphone is only
-   used when you press 🎙 Speak (see below).
+   `mood_log.csv` on the Mac and nowhere else. The microphone is only used when you press
+   🎙 Speak (see below).
+   **📷 Crowd camera (optional):** press *Turn camera on* on the DJ page and point the laptop at
+   the dance floor. It measures how much the room is moving (Quiet, Swaying, Grooving, Dancing,
+   Going wild) and sends that as the vibe score every 2 minutes instead of asking you, so a
+   quiet floor gets livelier songs. It only works out a movement number from tiny grey frames
+   inside the page: no video or photos are saved or sent anywhere, and no faces are looked at.
+   The Mac's green camera light shows guests it's on. Press *Turn camera off* to stop.
 9. **Buttons:** ⏹ Stop music (fades out; press again to play), ⏭ Next song, 🎤 Hype the crowd, 🚫 Block this song, 🚫 Block this artist,
    and a box to request a song ("Song name - Artist"). Or press **🎙 Speak** and say the song
    name: the music dips while it listens, then the request is added. This uses Chrome's speech
