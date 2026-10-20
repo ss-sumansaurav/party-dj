@@ -75,27 +75,83 @@ KIND_ENERGY = {"opening": 4, "Warm-up": 3, "Build": 4, "Peak": 5, "Peak 2": 5, "
                "shoutout": 4, "closing": 3}
 
 
-class Writer:
-    """Picks a line for each cue without repeating until a list is used up."""
+# Hindi and Hinglish lines, spoken by the Hindi voice. English words stay in English letters.
+LINES_HI = {
+    "Warm-up": [
+        "क्या बात है, क्या माहौल है! अब आ रहा है एक evergreen गाना, {next}!",
+        "पुरानी यादें, नए vibes. ज़ोर से गाइए, ये है {next}!",
+        "Mumbai, आवाज़ ऊँची करो! चलो, {next}!",
+    ],
+    "Build": [
+        "अरे वाह, dance floor गरम हो रहा है! रुकना नहीं है, ये है {next}!",
+        "{host} जी, सबको floor पे लाइए! आ गया {next}!",
+        "Energy बढ़ रही है, मज़ा आ रहा है! चलो, {next}!",
+    ],
+    "Peak": [
+        "हाथ ऊपर, पूरे ऊपर! ये है {next}!",
+        "{name}, ये गाना आपके लिए! सब लोग, {next}!",
+        "ढोल बजेगा, सब नाचेंगे! बल्ले बल्ले, {next}!",
+    ],
+    "Peak 2": [
+        "पार्टी अभी ख़त्म नहीं हुई, दोस्तों! Let's go, {next}!",
+        "क्या बात है Mumbai! फिर से, सब floor पे, {next}!",
+    ],
+    "Wind-down": [
+        "अब थोड़ा धीरे चलते हैं. किसी ख़ास के साथ, ये है {next}.",
+        "आँखें बंद, दिल खोलो. ये है {next}.",
+    ],
+    "vibe_up": [
+        "अरे, इतनी शांति क्यों? मुझे energy चाहिए! चलो, {next}!",
+    ],
+    "request": [
+        "Request आई है, और क्या कमाल की choice है! ये है {next}!",
+    ],
+    "hype": [
+        "{name} के लिए ज़ोरदार तालियाँ! और ज़ोर से!",
+        "Mumbai, आवाज़ नहीं आई! और ज़ोर से!",
+    ],
+    "cake": [
+        "तीन, दो, एक! केक काटो, {name}! सब मिलकर, happy birthday!",
+    ],
+    "shoutout": [
+        "जन्मदिन मुबारक हो {name}! साल भर ख़ुशियाँ ही ख़ुशियाँ. और {host} जी, इस शानदार पार्टी के लिए thank you!",
+    ],
+}
+HINDI_NAMES = {"Ketan": "केतन", "Poonam": "पूनम"}  # names as the Hindi voice should read them
 
-    def __init__(self, name: str, host: str, seed: str):
+
+class Writer:
+    """Picks a line for each cue without repeating until a list is used up.
+    About `hindi_share` of lines come out in Hindi or Hinglish, where one exists."""
+
+    def __init__(self, name: str, host: str, seed: str, hindi_share: float = 0.0):
         self.name, self.host = name, host
+        self.hindi_share = hindi_share
         self.rng = random.Random(seed)
-        self.decks: dict[str, list[str]] = {}
+        self.decks: dict[tuple[str, str], list[str]] = {}
 
     def line(self, kind: str, next_title: str = "") -> str:
-        deck = self.decks.get(kind)
+        hindi = kind in LINES_HI and self.rng.random() < self.hindi_share
+        source = LINES_HI if hindi else LINES
+        deck = self.decks.get((kind, hindi))
         if not deck:
-            deck = list(LINES[kind])
+            deck = list(source[kind])
             self.rng.shuffle(deck)
-            self.decks[kind] = deck
-        text = deck.pop().format(name=self.name, host=self.host, next=next_title)
+            self.decks[(kind, hindi)] = deck
+        name, host = (HINDI_NAMES.get(self.name, self.name), HINDI_NAMES.get(self.host, self.host)) if hindi \
+            else (self.name, self.host)
+        text = deck.pop().format(name=name, host=host, next=next_title)
         if len(text.split()) > MAX_WORDS:
             raise ValueError(f"Announcement too long for 15 seconds: {text}")
         return text
 
 
+def is_hindi(text: str) -> bool:
+    return bool(re.search(r"[\u0900-\u097F]", text))
+
+
 DJ_VOICE = "en-US-AndrewNeural"  # young American male voice; change in config.yaml (dj_voice)
+HINDI_VOICE = "hi-IN-MadhurNeural"  # young Hindi male voice for Hindi and Hinglish lines
 SAY_AS = {"Ketan": "Kaytun", "Poonam": "Poonum"}  # spelled the way the voice should say them
 _warned = False
 
@@ -104,7 +160,7 @@ PROSODY = {1: (-2, -3, 0), 2: (2, 0, 5), 3: (8, 3, 10), 4: (12, 6, 20), 5: (16, 
 
 
 def sentences(text: str) -> list[str]:
-    return [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p]
+    return [p for p in re.split(r"(?<=[.!?।])\s+", text.strip()) if p]
 
 
 def prosody(sentence: str, i: int, n: int, energy: int) -> tuple[str, str, str]:
@@ -163,7 +219,7 @@ def speak_to_file(text: str, path: Path, voice: str | None = None, energy: int =
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         out = path.with_suffix(".mp3")
-        _edge_tts(text, out, voice or DJ_VOICE, energy)
+        _edge_tts(text, out, voice or (HINDI_VOICE if is_hindi(text) else DJ_VOICE), energy)
         return out
     except Exception as e:
         global _warned
@@ -175,12 +231,16 @@ def speak_to_file(text: str, path: Path, voice: str | None = None, energy: int =
         from gtts import gTTS
 
         out = path.with_suffix(".mp3")
-        gTTS(for_voice(text, ""), lang="en", tld="com").save(str(out))
+        if is_hindi(text):
+            gTTS(text, lang="hi").save(str(out))
+        else:
+            gTTS(for_voice(text, ""), lang="en", tld="com").save(str(out))
         return out
     except Exception as gtts_error:
         if shutil.which("say"):
             out = path.with_suffix(".aiff")
-            voice = ["-v", "Alex"] if _has_voice("Alex") else []
+            want = "Lekha" if is_hindi(text) else "Alex"
+            voice = ["-v", want] if _has_voice(want) else []
             subprocess.run(["say", *voice, "-r", "205", "-o", str(out), for_voice(text, "")], check=True)
             return out
         raise RuntimeError(f"Couldn't make speech audio: {gtts_error}") from gtts_error

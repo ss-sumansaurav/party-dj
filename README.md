@@ -54,6 +54,7 @@ If `python dj.py --check-auth` starts failing, repeat steps 1 to 6. Re-check the
 | `song_play_seconds` | How long each song plays before the DJ mixes into the next (default 165; the birthday song plays in full) |
 | `crossfade_seconds` | Length of the smooth blend between songs (default 6) |
 | `dj_voice` | The DJ's voice (a young male neural voice by default; needs internet when announcements are made) |
+| `hindi_voice`, `hindi_announcement_share` | Voice for the Hindi and Hinglish announcements, and how many of them (0.35 = about a third) |
 | `name_pronunciations` | How the voice should say names (e.g. `Ketan: Kaytun`) |
 | `blocked_artists`, `blocked_tracks`, `requested_tracks` | Edit any time, before or during the party |
 
@@ -87,6 +88,23 @@ It takes a few minutes, plus about half an hour if you listen to every song, and
 
 Run it again after changing `config.yaml` or `songs.yaml`; the same date gives the same plan.
 
+## Songs page: see, add or remove songs
+
+```bash
+python dj.py --songs
+```
+
+This opens a page listing every song picked for the party, with a search box.
+
+- **Add a song:** type the song name and singer, pick the language and energy, then click Add.
+  It checks that YouTube Music has the song first.
+- **Remove a song:** click Remove next to it.
+
+Changes are saved in `songs.yaml`. During the party, the DJ page has a **🎵 See, add or remove
+party songs** link that opens the same list in a new tab, so the music keeps playing. There,
+it also shows what's playing, what's next and what's already played. An added song joins the
+next part of the night that suits its energy, and a removed song won't play.
+
 ## Party night: one command
 
 Connect the Mac to the speaker, then in Terminal:
@@ -106,7 +124,8 @@ python dj.py
 5. **Announcements** every few songs, spoken over the start of a song with the music turned
    down, in a young American DJ voice. Its speed, pitch and loudness follow the energy: calm
    and smooth for slow songs, building up and punchy for the big ones. If a name sounds off,
-   change its spelling under `name_pronunciations` in `config.yaml`.
+   change its spelling under `name_pronunciations` in `config.yaml`. About a third of the
+   announcements come out in Hindi or Hinglish in a Hindi voice (`hindi_announcement_share`).
 6. **Pick the vibe:** Auto follows the plan for the time of night. Chill, Groove, Dance,
    Bangers or On fire switch the music to that energy from the next song, until you pick
    Auto again.

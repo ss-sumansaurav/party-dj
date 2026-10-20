@@ -15,6 +15,9 @@ language_ratio:
 # DJ voice (Microsoft neural voice via edge-tts): young American male. Its tone rises and falls
 # with the energy of the moment. Other options: en-US-BrianNeural, en-US-GuyNeural, en-GB-RyanNeural
 dj_voice: en-US-AndrewNeural
+# Some announcements come out in Hindi or Hinglish, in this voice. 0.35 = about a third of them.
+hindi_voice: hi-IN-MadhurNeural
+hindi_announcement_share: 0.35
 # How the voice should say names, spelled out the way they sound. Tweak if a name sounds off.
 name_pronunciations:
   Ketan: Kaytun

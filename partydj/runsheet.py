@@ -31,7 +31,8 @@ def timeline(plan: SetPlan, cfg) -> None:
 
 
 def cues(plan: SetPlan, cfg) -> list[Cue]:
-    w = Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-lines")
+    w = Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-lines",
+               hindi_share=cfg.hindi_announcement_share)
     slots, b = plan.slots, plan.birthday_index
     out = [Cue(0, "opening", w.line("opening"), 0)]
     every = cfg.announcement_interval_songs

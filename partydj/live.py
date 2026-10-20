@@ -20,7 +20,8 @@ from pathlib import Path
 
 from . import announcer
 from .config import load_config
-from .planner import PHASE_RULES
+from .planner import PHASE_RULES, Slot
+from .songbook import Songbook
 from .songs import Song, is_blocked, parse_request
 
 MOOD_LOG = Path("mood_log.csv")
@@ -82,7 +83,8 @@ class Director:
         self.since_announce = 0
         self.closing_done = False
         self.opened = False
-        self.writer = announcer.Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-live")
+        self.writer = announcer.Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-live",
+                                       hindi_share=cfg.hindi_announcement_share)
         self.fixed: dict[str, str] = {}    # kind -> audio file name, made at start-up
         self.n_audio = 0
 
@@ -231,6 +233,46 @@ class Director:
                 "full": song.full, "announce": announce,
             }
 
+    # ---------- the songs page ----------
+    def song_states(self) -> dict[str, str]:
+        with self.lock:
+            nxt, _ = self.choose()
+            out = {}
+            for s in self.everything:
+                if is_blocked(s, *self.blocked):
+                    out[s.key] = "Removed / blocked"
+                elif self.current and s.key == self.current.key:
+                    out[s.key] = "▶ Playing now"
+                elif s.key in self.played:
+                    out[s.key] = "played"
+                elif nxt and s.key == nxt.key:
+                    out[s.key] = "⏭ Up next"
+                elif not s.video_id:
+                    out[s.key] = "Not found on YouTube Music"
+            for slot in self.slots:
+                out.setdefault(slot.song.key, f"Planned: {slot.phase}")
+            for s in self.plan.reserve:
+                out.setdefault(s.key, "Extra (plays if picked by vibe)")
+            return out
+
+    def add_song(self, song: Song):
+        """A song added on the songs page joins the plan in the next phase that suits its energy."""
+        with self.lock:
+            self.everything.append(song)
+            now = self.elapsed_min() if self.started else 0
+            phase = next((ph.name for ph in self.plan.phases if ph.end > now and ph.name in PHASE_RULES
+                          and song.energy in PHASE_RULES[ph.name]["energies"]), None)
+            if phase:
+                last = max((i for i, s in enumerate(self.slots) if s.phase == phase), default=len(self.slots) - 1)
+                self.slots.insert(last + 1, Slot(song, phase))
+        self.add_to_playlist(song)
+        self.notice(f"🎵 Added '{song.title}'" + (f" to the {phase} part of the night." if phase else "."))
+
+    def remove_song(self, title: str):
+        with self.lock:
+            self.blocked[1].append(title)
+        self.notice(f"🎵 Removed '{title}'. It won't play tonight.")
+
     def hype_now(self) -> list:
         with self.lock:
             a = self.speak("hype", self.writer.line("hype"))
@@ -363,7 +405,7 @@ class Director:
             }
 
 
-def serve(director: Director) -> str:
+def serve(director: Director, songbook: Songbook) -> str:
     title = html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party DJ")
     page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds)).replace("__TITLE__", title)
 
@@ -380,6 +422,8 @@ def serve(director: Director) -> str:
 
         def do_GET(self):
             u = urllib.parse.urlparse(self.path)
+            if songbook.handle(self, "GET", u.path, {}):
+                return
             if u.path == "/state":
                 return self._json(director.state())
             if u.path.startswith("/audio/"):
@@ -393,6 +437,8 @@ def serve(director: Director) -> str:
         def do_POST(self):
             u = urllib.parse.urlparse(self.path)
             q = urllib.parse.parse_qs(u.query)
+            if songbook.handle(self, "POST", u.path, q):
+                return
             arg = q.get("v", [""])[0]
             if u.path == "/start":
                 director.begin()
@@ -419,11 +465,13 @@ def serve(director: Director) -> str:
     return f"http://localhost:{PORT}/"
 
 
-def run(cfg, yt, plan, playlist_link: str | None, config_path: str):
+def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: str = "songs.yaml"):
     AUDIO_DIR.mkdir(exist_ok=True)
     director = Director(cfg, yt, plan, playlist_link, config_path)
     director.prepare()
-    url = serve(director)
+    book = Songbook(songs_path, yt, director)
+    book.page_title = f"{cfg.birthday_person_name}'s party songs"
+    url = serve(director, book)
     webbrowser.open(url)
     print(f"\nThe DJ page is open: {url}")
     print("Click the big START button on it. Keep this window and that page open all night.")
@@ -477,6 +525,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 </style></head><body><main>
 <div id="toast"></div>
 <h1>🎧 __TITLE__</h1>
+<div style="margin-bottom:8px"><a href="/songs" target="_blank" style="color:var(--pink);font-size:18px">🎵 See, add or remove party songs</a> <small style="color:var(--dim)">(opens in a new tab, the music keeps playing)</small></div>
 <div id="down">The DJ program isn't running. In Terminal run: <b>python dj.py</b></div>
 <button id="start">▶ START THE PARTY</button>
 <div id="players"><div id="p0"></div><div id="p1"></div></div>

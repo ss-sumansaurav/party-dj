@@ -29,6 +29,8 @@ class Config:
     requested_tracks: list[str] = field(default_factory=list)
     dj_voice: str = "en-US-AndrewNeural"
     name_pronunciations: dict = field(default_factory=dict)
+    hindi_voice: str = "hi-IN-MadhurNeural"
+    hindi_announcement_share: float = 0.35
     song_play_seconds: int = 165
     crossfade_seconds: int = 6
 
@@ -98,6 +100,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         blocked_tracks=[str(x) for x in raw.get("blocked_tracks") or []],
         requested_tracks=[str(x) for x in raw.get("requested_tracks") or []],
         dj_voice=str(raw.get("dj_voice") or "en-US-AndrewNeural"),
+        hindi_voice=str(raw.get("hindi_voice") or "hi-IN-MadhurNeural"),
+        hindi_announcement_share=float(raw.get("hindi_announcement_share", 0.35)),
         name_pronunciations={str(k): str(v) for k, v in (raw.get("name_pronunciations") or {}).items()},
         song_play_seconds=int(raw.get("song_play_seconds", 165)),
         crossfade_seconds=int(raw.get("crossfade_seconds", 6)),
@@ -109,6 +113,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         raise ConfigError("announcement_interval_songs should be 3 or 4")
     if not 60 <= cfg.song_play_seconds <= 600:
         raise ConfigError("song_play_seconds should be between 60 and 600")
+    if not 0 <= cfg.hindi_announcement_share <= 1:
+        raise ConfigError("hindi_announcement_share should be between 0 and 1")
     if not 0 <= cfg.crossfade_seconds <= 15:
         raise ConfigError("crossfade_seconds should be between 0 and 15")
     if not cfg.birthday_person_name or not cfg.host_name:

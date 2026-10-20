@@ -5,6 +5,7 @@
   python dj.py --sign-in        save YouTube Music sign-in from headers on the clipboard
   python dj.py --check-auth     confirm YouTube Music sign-in works
   python dj.py --test           dry run before the party
+  python dj.py --songs          see, add or remove the party's songs
   python dj.py                  party night: the whole party, DJ-mixed, in one command
 """
 from __future__ import annotations
@@ -242,21 +243,55 @@ def cmd_party(cfg, args) -> int:
     if missing:
         print(f"{len(missing)} songs weren't found on YouTube Music and are left out.")
     try:
-        live.run(cfg, yt, plan, link, args.config)
+        live.run(cfg, yt, plan, link, args.config, args.songs)
     except KeyboardInterrupt:
         print("\nParty over! Vibe scores are in mood_log.csv.")
+    return 0
+
+
+def cmd_songs(cfg, args) -> int:
+    """Open the songs page on its own, to see, add or remove songs before the party."""
+    import webbrowser
+
+    from partydj import live
+    from partydj.songbook import Songbook, serve_alone
+    from partydj.ytm import AuthError, client
+
+    try:
+        yt = client()
+    except AuthError:
+        from ytmusicapi import YTMusic
+
+        yt = YTMusic()  # searching works signed out
+    book = Songbook(args.songs, yt)
+    book.page_title = f"{cfg.birthday_person_name}'s party songs"
+    try:
+        link = serve_alone(book, live.PORT)
+    except OSError:  # the party is running: its page has the songs list too
+        link = f"http://localhost:{live.PORT}/songs"
+        webbrowser.open(link)
+        print(f"The DJ is running, so the songs page opened from it: {link}")
+        return 0
+    webbrowser.open(link)
+    print(f"The songs page is open: {link}\nPress Ctrl-C here when you're done.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nSaved. Your changes are in songs.yaml and are used the next time you run python dj.py.")
     return 0
 
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="AI DJ for a home birthday party")
     p.add_argument("--config", default="config.yaml")
-    p.add_argument("--songs", default="songs.yaml")
+    p.add_argument("--songs-file", dest="songs", default="songs.yaml")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--check-config", action="store_true")
     mode.add_argument("--sign-in", action="store_true")
     mode.add_argument("--check-auth", action="store_true")
     mode.add_argument("--test", action="store_true", help="dry run before the party")
+    mode.add_argument("--songs", dest="songs_page", action="store_true", help="see, add or remove party songs")
     mode.add_argument("--live", action="store_true", help="same as no option: run the party")
     args = p.parse_args(argv)
     if args.sign_in:
@@ -271,10 +306,13 @@ def main(argv=None) -> int:
 
     announcer.DJ_VOICE = cfg.dj_voice
     announcer.SAY_AS.update(cfg.name_pronunciations)
+    announcer.HINDI_VOICE = cfg.hindi_voice
     if args.check_config:
         return cmd_check_config(cfg)
     if args.check_auth:
         return cmd_check_auth(cfg)
+    if args.songs_page:
+        return cmd_songs(cfg, args)
     if args.test:
         return cmd_test(cfg, args)
     return cmd_party(cfg, args)
