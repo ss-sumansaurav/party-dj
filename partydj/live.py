@@ -57,7 +57,7 @@ class Host:
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.now = "Waiting for the first song..."
+        self.now = "Waiting: press Enter in Terminal as you start song 1."
         self.notices: list[str] = []
         self.vibe_due = False
         self.scores: list[int] = []
@@ -84,9 +84,16 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  .v small{display:block;font-size:14px}
  #due{background:#e91e63;padding:12px;border-radius:12px;font-size:22px}
  #now{font-size:22px;margin:10px} ul{list-style:none;padding:0;text-align:left;max-width:640px;margin:auto}
- li{background:#222;margin:6px 0;padding:10px;border-radius:8px} .a{font-size:18px;padding:12px 22px;border-radius:12px;border:0;background:#444;color:#fff}
+ li{background:#222;margin:6px 0;padding:10px;border-radius:8px}
+ button:active{transform:scale(.93);filter:brightness(1.4)}
+ #toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#2e7d32;color:#fff;
+   padding:12px 22px;border-radius:12px;font-size:20px;display:none}
+ #down{background:#b71c1c;padding:12px;border-radius:12px;font-size:20px} .a{font-size:18px;padding:12px 22px;border-radius:12px;border:0;background:#444;color:#fff}
 </style></head><body>
-<h1>🎧 Party DJ</h1><div id="now"></div>
+<div id="toast"></div>
+<h1>🎧 Party DJ</h1>
+<div id="down" hidden>The DJ isn't running. In Terminal run: python dj.py --live</div>
+<div id="now"></div>
 <div id="due" hidden>Vibe check! How's the crowd?</div>
 <div class="row">
  <button class="v" style="background:#3949ab" onclick="vibe(1)">1<small>chill</small></button>
@@ -95,16 +102,22 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  <button class="v" style="background:#fb8c00" onclick="vibe(4)">4</button>
  <button class="v" style="background:#e53935" onclick="vibe(5)">5<small>on fire</small></button>
 </div>
-<div class="row"><button class="a" onclick="fetch('/announce',{method:'POST'})">🎤 Say something now</button></div>
+<div class="row"><button class="a" onclick="announce()">🎤 Say something now</button></div>
 <div id="scores"></div><h3>For you</h3><ul id="notices"></ul>
 <script>
-function vibe(n){ fetch('/vibe?score='+n,{method:'POST'}).then(load); }
+function toast(t){ const e=document.getElementById('toast'); e.textContent=t; e.style.display='block';
+  clearTimeout(e.t); e.t=setTimeout(()=>e.style.display='none', 2500); }
+function post(path, ok){ fetch(path,{method:'POST'}).then(r=>{ if(!r.ok) throw 0; toast(ok); load(); })
+  .catch(()=>{ document.getElementById('down').hidden=false; }); }
+function vibe(n){ post('/vibe?score='+n, 'Vibe '+n+' saved ✓'); }
+function announce(){ post('/announce', '🎤 Announcement coming up'); }
 function load(){ fetch('/state').then(r=>r.json()).then(s=>{
+  document.getElementById('down').hidden = true;
   document.getElementById('now').textContent = s.now;
   document.getElementById('due').hidden = !s.vibe_due;
   document.getElementById('scores').textContent = s.scores.length ? 'Recent vibe scores: ' + s.scores.join(', ') : '';
   document.getElementById('notices').innerHTML = s.notices.map(n=>'<li>'+n+'</li>').join('');
-});}
+}).catch(()=>{ document.getElementById('down').hidden=false; });}
 load(); setInterval(load, 4000);
 </script></body></html>"""
 
@@ -130,6 +143,8 @@ def serve_page(host: Host) -> str:
                 if 1 <= score <= 5:
                     with host.lock:
                         host.pending_scores.append(score)
+                        host.scores.append(score)
+                        host.vibe_due = False
             elif u.path == "/announce":
                 with host.lock:
                     host.announce_now = True
@@ -281,11 +296,9 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
         with host.lock:
             new_scores, host.pending_scores = host.pending_scores, []
             say_now, host.announce_now = host.announce_now, False
-        for score in new_scores:
+        for n, score in enumerate(new_scores):
             with host.lock:
-                host.scores.append(score)
-                host.vibe_due = False
-                scores = list(host.scores)
+                scores = host.scores[:len(host.scores) - len(new_scores) + n + 1]
             choice = decide(scores)
             decision = {"up": "energy up one tier", "hold": "hold the energy", "plan": "keep the plan"}[choice]
             if choice == "up":
@@ -331,7 +344,13 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
                     seen_requests.add(text)
                     handle_request(yt, text, everything, position, plan, playlist_link, host)
 
-        time.sleep(POLL_SECONDS)
+        for _ in range(int(POLL_SECONDS)):
+            with host.lock:
+                if host.pending_scores or host.announce_now:
+                    break
+            time.sleep(1)
+        else:
+            time.sleep(POLL_SECONDS % 1)
 
     print("\nParty's over. Mood scores are in mood_log.csv. Good night!")
 
