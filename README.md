@@ -8,7 +8,7 @@ It never downloads or re-hosts audio, and never types your Google password anywh
 
 ## Setup (Mac)
 
-1. **Python 3.10+.** Check with `python3 --version`. If missing: `brew install python`.
+1. **Python 3.9+.** Check with `python3 --version`. If missing: `brew install python`.
 2. **Get the code and install:**
    ```bash
    git clone <your repo url> party-dj && cd party-dj
