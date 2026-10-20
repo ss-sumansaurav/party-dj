@@ -28,6 +28,8 @@ class Config:
     blocked_tracks: list[str] = field(default_factory=list)
     requested_tracks: list[str] = field(default_factory=list)
     dj_voice: str = "en-US-BrianNeural"
+    song_play_seconds: int = 165
+    crossfade_seconds: int = 6
 
     @property
     def start(self) -> dt.datetime:
@@ -95,12 +97,18 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         blocked_tracks=[str(x) for x in raw.get("blocked_tracks") or []],
         requested_tracks=[str(x) for x in raw.get("requested_tracks") or []],
         dj_voice=str(raw.get("dj_voice") or "en-US-BrianNeural"),
+        song_play_seconds=int(raw.get("song_play_seconds", 165)),
+        crossfade_seconds=int(raw.get("crossfade_seconds", 6)),
     )
 
     if not 30 <= cfg.duration_minutes <= 600:
         raise ConfigError("duration_minutes should be between 30 and 600")
     if not 3 <= cfg.announcement_interval_songs <= 4:
         raise ConfigError("announcement_interval_songs should be 3 or 4")
+    if not 60 <= cfg.song_play_seconds <= 600:
+        raise ConfigError("song_play_seconds should be between 60 and 600")
+    if not 0 <= cfg.crossfade_seconds <= 15:
+        raise ConfigError("crossfade_seconds should be between 0 and 15")
     if not cfg.birthday_person_name or not cfg.host_name:
         raise ConfigError("birthday_person_name and host_name can't be empty")
     if not 0 < cfg.birthday_offset_minutes < cfg.duration_minutes:

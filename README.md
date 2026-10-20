@@ -1,8 +1,9 @@
 # Party DJ
 
-A playlist-driven "AI DJ" for a home birthday party: it builds a private YouTube Music
-playlist and a timed run-sheet, and speaks short, high-energy English announcements in a Gen Z DJ voice through the speaker
-while the host plays the playlist in the YouTube Music app or website.
+An "AI DJ" for a home birthday party. One command plans the night, makes a private YouTube
+Music playlist and a timed run-sheet, then mixes the party in a browser page: each song plays
+for a couple of minutes, songs crossfade smoothly into each other, and a Gen Z DJ voice talks
+over the intros with the music turned down.
 
 It never downloads or re-hosts audio, and never types your Google password anywhere.
 
@@ -50,6 +51,8 @@ If `python dj.py --check-auth` starts failing, repeat steps 1 to 6. Re-check the
 | `language_ratio` | Hindi share must be at least 0.7 |
 | `announcement_interval_songs` | 3 or 4 |
 | `vibe_check_minutes` | How often to ask for a 1 to 5 vibe score |
+| `song_play_seconds` | How long each song plays before the DJ mixes into the next (default 165; the birthday song plays in full) |
+| `crossfade_seconds` | Length of the smooth blend between songs (default 6) |
 | `dj_voice` | The DJ's voice (a young male neural voice by default; needs internet when announcements are made) |
 | `blocked_artists`, `blocked_tracks`, `requested_tracks` | Edit any time, before or during the party |
 
@@ -83,41 +86,37 @@ It takes a few minutes, plus about half an hour if you listen to every song, and
 
 Run it again after changing `config.yaml` or `songs.yaml`; the same date gives the same plan.
 
-## Party night (live run)
-
-**One-time Chrome setting:** play YouTube Music in Google Chrome, and in Chrome's menu bar
-turn on **View > Developer > Allow JavaScript from Apple Events**. This lets the DJ pause the
-music for each announcement and start the next song itself. The first time, macOS asks
-whether Terminal may control Google Chrome: click **OK**.
+## Party night: one command
 
 Connect the Mac to the speaker, then in Terminal:
 
 ```bash
 cd ~/party-dj
 source .venv/bin/activate
-python dj.py --check-auth
-python dj.py --live
+python dj.py
 ```
 
-1. It makes the night's announcements and opens a **control page** in your browser
-   (http://localhost:8765) with five big vibe buttons and messages for you.
-2. Open music.youtube.com in a Chrome tab (shuffle off). Don't press play.
-3. Press Enter in Terminal. The DJ says hello, then starts song 1 of the playlist.
-4. When a song with an announcement comes on, the DJ **pauses it, plays the announcement
-   (air horn, then the voice), then lets the song play**.
-5. **Birthday block:** at `birthday_block_time` it pauses the music, plays the birthday
-   intro and starts the birthday song. The cake cue and shout-out follow it.
-6. **Vibe check** every 15 minutes: Terminal beeps and the page asks for a score. Tap 1 to 5.
-   Two scores of 1–2 in a row: the DJ plays a livelier song next, then returns to the plan.
-   Two scores of 4–5: it holds the energy. Scores go to `mood_log.csv` on the Mac and
-   nowhere else. No camera or microphone is used.
-7. **Blocks and requests:** edit `blocked_artists`, `blocked_tracks` or `requested_tracks`
-   in `config.yaml` at any time. Within a minute, blocked songs are skipped and a request
-   plays next (it's added to the end of the playlist if it wasn't there).
-8. **🎤 Say something now** on the page pauses the music for an announcement straight away.
+1. If the YouTube Music sign-in has expired, it walks you through signing in again.
+2. It plans the set, checks the playlist (it asks before creating one) and opens the
+   **DJ page** in your browser (http://localhost:8765).
+3. Click **▶ START THE PARTY**. The DJ says hello and the music starts. Leave the page open.
+4. **DJ mixing:** each song plays for about 2¾ minutes (`song_play_seconds`), skipping a few
+   seconds of long intros, then blends into the next song over `crossfade_seconds`.
+5. **Announcements** every few songs, spoken over the start of a song with the music turned
+   down. The air horn only plays for big moments: the opening, the birthday, an energy boost
+   and the 🎤 Hype button.
+6. **Pick the vibe:** Auto follows the plan for the time of night. Chill, Groove, Dance,
+   Bangers or On fire switch the music to that energy from the next song, until you pick
+   Auto again.
+7. **Birthday block:** at `birthday_block_time` the DJ blends straight into the birthday
+   intro and plays the birthday song in full, then the cake cue and the shout-out.
+8. **Vibe check** every 15 minutes: the page asks for a score from 1 to 5. Two scores of 1–2
+   in a row lift the next song one energy level; two of 4–5 hold the energy. Scores go to
+   `mood_log.csv` on the Mac and nowhere else. No camera or microphone is used.
+9. **Buttons:** ⏭ Next song, 🎤 Hype the crowd, 🚫 Block this song, 🚫 Block this artist,
+   and a box to request a song ("Song name - Artist"). Requests play next. Edits to
+   `blocked_*` and `requested_tracks` in `config.yaml` are also picked up within a minute.
 
-If Chrome can't be controlled, the DJ says what to fix; type `s` to carry on without it.
-Announcements then play over the music and the control page tells you what to click.
-
-Stop any time with Ctrl-C. You can rehearse on any day: it runs the same way, with the
-birthday block the same distance from when you start.
+Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
+birthday block the same distance from when you click START. (`python dj.py --live` does the
+same thing as `python dj.py`.)

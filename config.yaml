@@ -16,6 +16,10 @@ language_ratio:
 # en-US-AndrewNeural, en-US-ChristopherNeural, en-GB-RyanNeural, en-IN-PrabhatNeural
 dj_voice: en-US-BrianNeural
 
+# DJ mixing: how much of each song to play, and how long songs blend into each other.
+song_play_seconds: 165         # about 2 min 45 s per song (the birthday song plays in full)
+crossfade_seconds: 6
+
 announcement_interval_songs: 4 # one announcement every 3-4 songs
 vibe_check_minutes: 15         # how often to ask the host for a vibe score
 

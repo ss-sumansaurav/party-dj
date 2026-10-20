@@ -35,6 +35,11 @@ class Song:
     video_id: str | None = None
     seconds: int | None = None
     explicit: bool = False
+    full: bool = False  # play the whole song (the birthday song)
+
+    # DJ mode plays only part of each song; set from config (song_play_seconds).
+    play_cap = None
+    crossfade = 0
 
     @property
     def key(self) -> str:
@@ -49,8 +54,16 @@ class Song:
         return self.artist.split(",")[0].strip()
 
     @property
-    def length(self) -> int:
+    def full_length(self) -> int:
         return self.seconds or DEFAULT_SECONDS
+
+    @property
+    def length(self) -> int:
+        """How long this song takes in the set, after DJ trimming and the crossfade overlap."""
+        n = self.full_length
+        if self.play_cap and not self.full:
+            n = min(n, self.play_cap)
+        return max(30, n - self.crossfade)
 
     @property
     def url(self) -> str | None:
@@ -88,6 +101,7 @@ def load_pool(path: str | Path, cfg) -> tuple[list[Song], Song]:
     """Return (usable songs, birthday song) after blocks, requests and de-duplication."""
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     birthday = _song(raw["birthday_song"])
+    birthday.full = True
     songs: dict[str, Song] = {}
     for row in raw.get("songs") or []:
         s = _song(row)

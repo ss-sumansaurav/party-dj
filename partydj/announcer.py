@@ -47,6 +47,15 @@ LINES = {
         "Hold up, the vibe's a little sleepy. We don't do that here! Wake up, it's {next}!",
         "Okay squad, I need more energy, like right now! Here comes {next}, let's goooo!",
     ],
+    "request": [
+        "Ayo, we got a request and it's a certified banger! This one's {next}, let's gooo!",
+        "Request unlocked! Somebody here has elite taste. It's {next}!",
+    ],
+    "hype": [
+        "Make some noise for {name}! Louder! This party is absolutely bussin!",
+        "Everybody hands up, this is the moment! {host}, you ate with this party, no crumbs!",
+        "Is this the best party in Mumbai tonight? No cap, it is! Let's gooo!",
+    ],
     "birthday_intro": [
         "Okay everybody, attention please! Lights down, cake out. It's {name}'s main character moment, so make some noise!",
     ],

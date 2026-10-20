@@ -5,7 +5,7 @@
   python dj.py --sign-in        save YouTube Music sign-in from headers on the clipboard
   python dj.py --check-auth     confirm YouTube Music sign-in works
   python dj.py --test           dry run before the party
-  python dj.py --live           party night: announcements, birthday block, vibe checks
+  python dj.py                  party night: the whole party, DJ-mixed, in one command
 """
 from __future__ import annotations
 
@@ -110,6 +110,9 @@ def build_set(cfg, yt, songs_file: str):
     from partydj import planner, resolver, runsheet
     from partydj.songs import load_pool
 
+    from partydj.songs import Song
+
+    Song.play_cap, Song.crossfade = cfg.song_play_seconds, cfg.crossfade_seconds
     pool, birthday = load_pool(songs_file, cfg)
     print(f"Looking up {len(pool) + 1} songs on YouTube Music (cached after the first run)...")
     missing = resolver.resolve_all(yt, pool + [birthday])
@@ -202,30 +205,46 @@ def cmd_test(cfg, args) -> int:
     return 0
 
 
-def cmd_live(cfg, args) -> int:
-    from partydj import live, runsheet
-    from partydj.playlist import find_existing, url
-    from partydj.ytm import AuthError, check_auth, client
+def sign_in_if_needed() -> bool:
+    """Make sure YouTube Music sign-in works, walking the host through it if not."""
+    from partydj.ytm import AuthError, check_auth
 
     try:
-        print(f"Signed in as: {check_auth()}")
-        yt = client()
+        print(f"Signed in to YouTube Music as: {check_auth()}")
+        return True
     except AuthError as e:
-        print(e)
+        print(f"\nYouTube Music sign-in needed ({e})")
+    print("1. In Chrome, open music.youtube.com (signed in).")
+    print("2. Press Option-Command-I, click the Network tab, then click Home on the page.")
+    print("3. Type browse in the filter box, right-click the first 'browse' row, Copy > Copy as cURL.")
+    try:
+        input("4. Come back here and press Enter. ")
+    except EOFError:
+        return False
+    return cmd_sign_in() == 0
+
+
+def cmd_party(cfg, args) -> int:
+    """The whole party in one command: sign in, plan, playlist, then the DJ page."""
+    from partydj import live, runsheet
+    from partydj.playlist import find_existing, url
+    from partydj.ytm import client
+
+    print(f"=== {cfg.birthday_person_name}'s birthday party DJ ===\n")
+    if not sign_in_if_needed():
+        print("Sign-in didn't work. Run python dj.py again to retry.")
         return 1
+    yt = client()
     plan, cue_list, missing = build_set(cfg, yt, args.songs)
     existing = find_existing(yt, cfg.playlist_title)
     link = url(existing) if existing else save_playlist(yt, cfg, plan)
-    if not link:
-        print("No playlist to play. Run again and answer y to create it.")
-        return 1
     OUT_RUNSHEET.write_text(runsheet.to_markdown(plan, cue_list, cfg, link), encoding="utf-8")
     if missing:
-        print(f"{len(missing)} songs weren't found and are left out (see python dj.py --test).")
+        print(f"{len(missing)} songs weren't found on YouTube Music and are left out.")
     try:
-        live.run(cfg, yt, plan, cue_list, link, args.config)
+        live.run(cfg, yt, plan, link, args.config)
     except KeyboardInterrupt:
-        print("\nStopped. Mood scores are in mood_log.csv.")
+        print("\nParty over! Vibe scores are in mood_log.csv.")
     return 0
 
 
@@ -233,12 +252,12 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="AI DJ for a home birthday party")
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--songs", default="songs.yaml")
-    mode = p.add_mutually_exclusive_group(required=True)
+    mode = p.add_mutually_exclusive_group()
     mode.add_argument("--check-config", action="store_true")
     mode.add_argument("--sign-in", action="store_true")
     mode.add_argument("--check-auth", action="store_true")
     mode.add_argument("--test", action="store_true", help="dry run before the party")
-    mode.add_argument("--live", action="store_true", help="party night")
+    mode.add_argument("--live", action="store_true", help="same as no option: run the party")
     args = p.parse_args(argv)
     if args.sign_in:
         return cmd_sign_in()
@@ -255,9 +274,9 @@ def main(argv=None) -> int:
         return cmd_check_config(cfg)
     if args.check_auth:
         return cmd_check_auth(cfg)
-    if args.live:
-        return cmd_live(cfg, args)
-    return cmd_test(cfg, args)
+    if args.test:
+        return cmd_test(cfg, args)
+    return cmd_party(cfg, args)
 
 
 if __name__ == "__main__":

@@ -1,17 +1,16 @@
-"""Party-night mode: announcements on cue, the birthday block, vibe checks, blocks and requests.
+"""Party-night DJ: a browser page that mixes the night like a DJ.
 
-The host plays the playlist in YouTube Music. This follows along by checking the account's
-listening history, so each announcement plays when the song it introduces starts. If the
-history can't be read, it falls back to the run-sheet's estimated times.
+Python (the "director") decides what plays next: the plan for the time of night, the vibe the
+host picks, requests, blocks, the birthday block and the vibe-check rule. The page plays each
+song through YouTube's own player (nothing is downloaded), trims it DJ-style, crossfades
+between two players, and talks over the intro with the music turned down, like a real DJ.
 """
 from __future__ import annotations
 
 import csv
 import datetime as dt
-import html
 import http.server
 import json
-import queue
 import threading
 import time
 import urllib.parse
@@ -20,142 +19,15 @@ from pathlib import Path
 
 from . import announcer
 from .config import load_config
-from .songs import is_blocked, parse_request
+from .planner import PHASE_RULES
+from .songs import Song, is_blocked, parse_request
 
 MOOD_LOG = Path("mood_log.csv")
-POLL_SECONDS = 15
-
-
-class Speaker:
-    """Plays announcements one at a time in the background, so nothing overlaps."""
-
-    def __init__(self):
-        self.q: queue.Queue = queue.Queue()
-        threading.Thread(target=self._run, daemon=True).start()
-
-    def say(self, path: Path, label: str):
-        print(f"  🎤 {label}")
-        self.q.put(path)
-
-    def say_text(self, text: str, name: str):
-        try:
-            self.say(announcer.speak_to_file(text, Path("announcements") / name), text)
-        except RuntimeError as e:
-            print(f"  (couldn't make that announcement: {e})")
-
-    def _run(self):
-        while True:
-            path = self.q.get()
-            try:
-                announcer.play(path)
-            except RuntimeError as e:
-                print(f"  {e}")
-
-
-class Host:
-    """What the host's control page shows, and what it sends back."""
-
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.now = "Waiting: press Enter in Terminal as you start song 1."
-        self.notices: list[str] = []
-        self.vibe_due = False
-        self.scores: list[int] = []
-        self.pending_scores: list[int] = []
-        self.announce_now = False
-
-    def notice(self, text: str):
-        print(f"  ➜ {text}")
-        with self.lock:
-            self.notices = ([f"{dt.datetime.now():%I:%M %p}: {text}"] + self.notices)[:8]
-
-    def state(self) -> dict:
-        with self.lock:
-            return {"now": self.now, "notices": self.notices, "vibe_due": self.vibe_due,
-                    "scores": self.scores[-6:]}
-
-
-PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Party DJ</title>
-<style>
- body{font-family:-apple-system,sans-serif;background:#111;color:#eee;text-align:center;margin:0;padding:16px}
- .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:14px 0}
- .v{font-size:40px;width:110px;height:110px;border-radius:20px;border:0;color:#fff;cursor:pointer}
- .v small{display:block;font-size:14px}
- #due{background:#e91e63;padding:12px;border-radius:12px;font-size:22px}
- #now{font-size:22px;margin:10px} ul{list-style:none;padding:0;text-align:left;max-width:640px;margin:auto}
- li{background:#222;margin:6px 0;padding:10px;border-radius:8px}
- button:active{transform:scale(.93);filter:brightness(1.4)}
- #toast{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#2e7d32;color:#fff;
-   padding:12px 22px;border-radius:12px;font-size:20px;display:none}
- #down{background:#b71c1c;padding:12px;border-radius:12px;font-size:20px} .a{font-size:18px;padding:12px 22px;border-radius:12px;border:0;background:#444;color:#fff}
-</style></head><body>
-<div id="toast"></div>
-<h1>🎧 Party DJ</h1>
-<div id="down" hidden>The DJ isn't running. In Terminal run: python dj.py --live</div>
-<div id="now"></div>
-<div id="due" hidden>Vibe check! How's the crowd?</div>
-<div class="row">
- <button class="v" style="background:#3949ab" onclick="vibe(1)">1<small>chill</small></button>
- <button class="v" style="background:#00897b" onclick="vibe(2)">2</button>
- <button class="v" style="background:#7cb342" onclick="vibe(3)">3</button>
- <button class="v" style="background:#fb8c00" onclick="vibe(4)">4</button>
- <button class="v" style="background:#e53935" onclick="vibe(5)">5<small>on fire</small></button>
-</div>
-<div class="row"><button class="a" onclick="announce()">🎤 Say something now</button></div>
-<div id="scores"></div><h3>For you</h3><ul id="notices"></ul>
-<script>
-function toast(t){ const e=document.getElementById('toast'); e.textContent=t; e.style.display='block';
-  clearTimeout(e.t); e.t=setTimeout(()=>e.style.display='none', 2500); }
-function post(path, ok){ fetch(path,{method:'POST'}).then(r=>{ if(!r.ok) throw 0; toast(ok); load(); })
-  .catch(()=>{ document.getElementById('down').hidden=false; }); }
-function vibe(n){ post('/vibe?score='+n, 'Vibe '+n+' saved ✓'); }
-function announce(){ post('/announce', '🎤 Announcement coming up'); }
-function load(){ fetch('/state').then(r=>r.json()).then(s=>{
-  document.getElementById('down').hidden = true;
-  document.getElementById('now').textContent = s.now;
-  document.getElementById('due').hidden = !s.vibe_due;
-  document.getElementById('scores').textContent = s.scores.length ? 'Recent vibe scores: ' + s.scores.join(', ') : '';
-  document.getElementById('notices').innerHTML = s.notices.map(n=>'<li>'+n+'</li>').join('');
-}).catch(()=>{ document.getElementById('down').hidden=false; });}
-load(); setInterval(load, 4000);
-</script></body></html>"""
-
-
-def serve_page(host: Host) -> str:
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def _send(self, code, body=b"", kind="text/html; charset=utf-8"):
-            self.send_response(code)
-            self.send_header("Content-Type", kind)
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_GET(self):
-            if self.path.startswith("/state"):
-                self._send(200, json.dumps(host.state()).encode(), "application/json")
-            else:
-                self._send(200, PAGE.encode())
-
-        def do_POST(self):
-            u = urllib.parse.urlparse(self.path)
-            if u.path == "/vibe":
-                score = int(urllib.parse.parse_qs(u.query).get("score", ["0"])[0])
-                if 1 <= score <= 5:
-                    with host.lock:
-                        host.pending_scores.append(score)
-                        host.scores.append(score)
-                        host.vibe_due = False
-            elif u.path == "/announce":
-                with host.lock:
-                    host.announce_now = True
-            self._send(204)
-
-        def log_message(self, *args):
-            pass
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return "http://localhost:8765/"
+AUDIO_DIR = Path("announcements")
+PORT = 8765
+TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
+TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2"}
+HORN_KINDS = {"opening", "birthday_intro", "vibe_up", "hype"}  # air horn for big moments only
 
 
 def log_mood(score: int, playing: str, decision: str):
@@ -168,7 +40,7 @@ def log_mood(score: int, playing: str, decision: str):
 
 
 def decide(scores: list[int]) -> str:
-    """The vibe rule: two lows in a row means lift the energy; two highs means hold it."""
+    """The vibe rule: two lows in a row lifts the energy one tier; two highs holds it."""
     last = scores[-2:]
     if len(last) == 2 and all(s <= 2 for s in last):
         return "up"
@@ -177,353 +49,507 @@ def decide(scores: list[int]) -> str:
     return "plan"
 
 
-def connect_player(playlist_link: str | None):
-    """Return a ChromePlayer if Chrome can be controlled, after helping the host set it up."""
-    from .player import ChromePlayer, PlayerError
+def start_offset(song: Song) -> int:
+    """Skip a little of the intro on longer songs, like a DJ mixing in."""
+    if song.full or not song.seconds or song.seconds < 200:
+        return 0
+    return 10
 
-    pid = urllib.parse.parse_qs(urllib.parse.urlparse(playlist_link or "").query).get("list", [None])[0]
-    player = ChromePlayer(pid)
-    while True:
+
+class Director:
+    def __init__(self, cfg, yt, plan, playlist_link: str | None, config_path: str):
+        self.cfg, self.yt, self.plan = cfg, yt, plan
+        self.playlist_link, self.config_path = playlist_link, config_path
+        self.lock = threading.RLock()
+        self.slots = plan.slots
+        self.everything: list[Song] = plan.songs + plan.reserve
+        self.phase_of = {s.song.key: s.phase for s in plan.slots}
+        self.played: set[str] = set()
+        self.current: Song | None = None
+        self.mode = "auto"                 # or a tier 1..5 the host picked
+        self.inserts: list[tuple[Song, str]] = []   # (song, reason) to play next
+        self.one_shot_tier: int | None = None        # from the vibe rule
+        self.blocked = (list(cfg.blocked_artists), list(cfg.blocked_tracks))
+        self.seen_requests = set(cfg.requested_tracks)
+        self.scores: list[int] = []
+        self.notices: list[str] = []
+        self.started: dt.datetime | None = None
+        self.birthday_at: dt.datetime | None = None
+        self.birthday_state = "pending"    # pending -> due -> playing -> done
+        self.force_next = False
+        self.vibe_due = False
+        self.next_vibe: dt.datetime | None = None
+        self.since_announce = 0
+        self.closing_done = False
+        self.opened = False
+        self.writer = announcer.Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-live")
+        self.fixed: dict[str, str] = {}    # kind -> audio file name, made at start-up
+        self.n_audio = 0
+
+    # ---------- helpers ----------
+    def notice(self, text: str):
+        print(f"  ➜ {text}")
+        with self.lock:
+            self.notices = ([f"{dt.datetime.now():%I:%M %p}  {text}"] + self.notices)[:10]
+
+    def speak(self, kind: str, text: str) -> dict | None:
+        self.n_audio += 1
+        name = f"live_{self.n_audio:03d}_{kind.replace(' ', '_')}"
         try:
-            player.check()
-            print("✓ Connected to YouTube Music in Chrome: the DJ will pause the music for each announcement.")
-            return player
-        except PlayerError as e:
-            print(f"\nTo let the DJ pause and start the music: {e}")
-            try:
-                ans = input("Fix that and press Enter to try again, or type s to skip "
-                            "(announcements will play over the music): ").strip().lower()
-            except EOFError:
-                ans = "s"
-            if ans == "s":
-                return None
-
-
-def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
-    from .player import PlayerError
-
-    slots = plan.slots
-    everything = plan.songs + plan.reserve
-    position = {s.video_id: i for i, s in enumerate(everything) if s.video_id}
-    by_slot: dict[int, list] = {}
-    for c in cue_list:
-        if c.kind not in ("opening", "birthday_intro"):
-            by_slot.setdefault(c.before, []).append(c)
-    birthday_intro = next((c for c in cue_list if c.kind == "birthday_intro"), None)
-    writer = announcer.Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-live")
-
-    print("Making announcement audio...")
-    audio = {}
-    for n, c in enumerate(cue_list):
-        try:
-            audio[id(c)] = announcer.speak_to_file(c.text, Path("announcements") / f"cue_{n:02d}_{c.kind}")
+            path = announcer.speak_to_file(text, AUDIO_DIR / name)
         except RuntimeError as e:
-            print(f"  {e}")
-    announcer.make_horn()
+            print(f"  (couldn't make an announcement: {e})")
+            return None
+        print(f"  🎤 {text}")
+        return {"url": f"/audio/{path.name}", "horn": kind in HORN_KINDS, "text": text}
 
-    host = Host()
-    speaker = Speaker()
-    page = serve_page(host)
-    webbrowser.open(page)
-    print(f"\nControl page: {page}  (vibe buttons and messages for you)")
-    if playlist_link:
-        print(f"Playlist:     {playlist_link}")
-    print("\nOpen YouTube Music in Google Chrome (shuffle OFF). Don't press play: the DJ starts it.")
-    player = connect_player(playlist_link)
+    def prepare(self):
+        """Make the fixed announcements before the party starts."""
+        print("Making announcements...")
+        announcer.make_horn(AUDIO_DIR / "horn.wav")
+        w = self.writer
+        for kind in ("opening", "birthday_intro", "cake", "shoutout", "closing"):
+            self.fixed[kind] = w.line(kind)
 
-    def announce(items, resume: bool = True):
-        """items: list of (audio path, text). With Chrome: pause, speak, resume. Without: talk over."""
-        items = [(p, t) for p, t in items if p]
-        if not items:
-            return
-        if player is None:
-            for path, text in items:
-                speaker.say(path, text)
-            return
-        try:
-            player.pause()
-        except PlayerError as e:
-            host.notice(f"Couldn't pause the music: {e}")
-        for path, text in items:
-            print(f"  🎤 {text}")
-            try:
-                announcer.play(path)
-            except RuntimeError as e:
-                print(f"  {e}")
-        if not resume:
-            return
-        try:
-            player.resume()
-        except PlayerError as e:
-            host.notice(f"Couldn't restart the music, press play in YouTube Music: {e}")
+    def elapsed_min(self) -> float:
+        return (dt.datetime.now() - self.started).total_seconds() / 60 if self.started else 0
 
-    def fresh_line(kind: str, title: str, name: str):
-        text = writer.line(kind, title)
-        try:
-            return announcer.speak_to_file(text, Path("announcements") / name), text
-        except RuntimeError as e:
-            print(f"  (couldn't make that announcement: {e})")
-            return None, text
+    def phase_now(self) -> str:
+        m = self.elapsed_min()
+        for ph in self.plan.phases:
+            if ph.start <= m < ph.end and ph.name != "Birthday":
+                return ph.name
+        if self.birthday_state in ("playing",):
+            return "Peak 2"
+        return "Wind-down" if m >= self.cfg.duration_minutes - 45 else "Peak 2"
 
-    def jump(index: int) -> bool:
-        if player is None or not everything[index].video_id:
-            return False
-        try:
-            if not player.open(everything[index].video_id):
-                host.notice(f"Press play in YouTube Music to start '{everything[index].title}'.")
-            return True
-        except PlayerError as e:
-            host.notice(f"Couldn't change the song: {e}")
-            return False
+    def playable(self, s: Song) -> bool:
+        return bool(s.video_id) and s.key not in self.played and not is_blocked(s, *self.blocked) \
+            and not (s.full and self.birthday_state != "due")
 
-    try:
-        input("\nPress Enter to start the party! " + (
-            "The DJ will say hello, then start song 1." if player else
-            "Press play on song 1 in YouTube Music at the same moment."))
-    except EOFError:
-        pass
+    def pick_by_tier(self, tier: int) -> Song | None:
+        pool = [s for s in self.everything if self.playable(s)]
+        for t in (tier, tier - 1 if tier > 1 else 2, tier + 1):
+            same = [s for s in pool if s.energy == t]
+            if same:
+                return same[0]
+        return pool[0] if pool else None
 
-    started = dt.datetime.now()
-    on_party_day = started.date() == cfg.start.date()
-    if on_party_day:
-        birthday_at = cfg.start + dt.timedelta(minutes=cfg.birthday_offset_minutes)
-    else:  # a rehearsal on another day: keep the same gap from the start
-        birthday_at = started + dt.timedelta(minutes=cfg.birthday_offset_minutes)
-    end_at = started + dt.timedelta(minutes=cfg.duration_minutes + 15)
-    print(f"Started {started:%I:%M %p}. Birthday block at {birthday_at:%I:%M %p}. Ctrl-C to stop.\n")
+    def pick_auto(self) -> Song | None:
+        phase = self.phase_now()
+        planned = [s.song for s in self.slots if s.phase == phase and self.playable(s.song)]
+        if planned:
+            return planned[0]
+        energies = PHASE_RULES[phase]["energies"]
+        fits = [s for s in self.everything if self.playable(s) and s.energy in energies]
+        if fits:
+            return fits[0]
+        rest = [s for s in self.everything if self.playable(s)]
+        return rest[0] if rest else None
 
-    played_cues: set[int] = set()
-    opening = next(c for c in cue_list if c.kind == "opening")
-    played_cues.add(id(opening))
-    if player:
-        announce([(audio.get(id(opening)), opening.text)], resume=False)
-        jump(0)
-    else:
-        announce([(audio.get(id(opening)), opening.text)])
+    # ---------- the main decision ----------
+    def next_track(self, error: bool = False) -> dict:
+        with self.lock:
+            if error and self.current:
+                self.notice(f"'{self.current.title}' won't play here, moving on.")
+            announce: list = []
+            reason = None
+            song = None
+            if self.birthday_state == "due":
+                song = next((s.song for s in self.slots if s.song.full), None)
+                self.birthday_state = "playing"
+                a = self.speak("birthday_intro", self.fixed["birthday_intro"])
+                announce += [a] if a else []
+                reason = "birthday"
+            elif self.birthday_state == "playing":
+                self.birthday_state = "done"
+                for kind in ("cake", "shoutout"):
+                    a = self.speak(kind, self.fixed[kind])
+                    announce += [a] if a else []
+                self.since_announce = 0
+            if song is None:
+                while self.inserts and song is None:
+                    cand, why = self.inserts.pop(0)
+                    if self.playable(cand):
+                        song, reason = cand, why
+            if song is None and self.one_shot_tier:
+                song = self.pick_by_tier(self.one_shot_tier)
+                reason = "boost" if self.current and self.one_shot_tier > self.current.energy else "hold"
+                self.one_shot_tier = None
+            if song is None:
+                song = self.pick_by_tier(self.mode) if self.mode != "auto" else self.pick_auto()
+            if song is None:
+                return {"done": True}
 
-    current = -1           # index into `everything`
-    history_ok = True
-    history_failures = 0
-    last_history = 0.0
-    next_vibe = started + dt.timedelta(minutes=cfg.vibe_check_minutes)
-    birthday_done = False
-    insert: tuple[int, str] | None = None   # (song index, reason) to play next: boost or request
-    return_to: int | None = None            # where to go back to after an inserted song
-    inserted: int | None = None
-    blocked = (list(cfg.blocked_artists), list(cfg.blocked_tracks))
-    seen_requests = set(cfg.requested_tracks)
-    blocked_warned: set[str] = set()
-    last_reload = time.monotonic()
+            self.played.add(song.key)
+            self.current = song
+            # What the DJ says over the intro.
+            if not self.opened:
+                self.opened = True
+                a = self.speak("opening", self.fixed["opening"])
+                announce += [a] if a else []
+                self.since_announce = 0
+            elif reason in ("boost", "request") and not announce:
+                a = self.speak("vibe_up" if reason == "boost" else "request",
+                               self.writer.line("vibe_up" if reason == "boost" else "request", song.title))
+                announce += [a] if a else []
+                self.since_announce = 0
+            elif not announce:
+                self.since_announce += 1
+                closing_time = self.elapsed_min() >= self.cfg.duration_minutes - 4
+                if closing_time and not self.closing_done:
+                    self.closing_done = True
+                    a = self.speak("closing", self.fixed["closing"])
+                    announce += [a] if a else []
+                elif self.since_announce >= self.cfg.announcement_interval_songs:
+                    phase = self.phase_now() if self.mode == "auto" else TIER_LINES[self.mode]
+                    a = self.speak(phase, self.writer.line(phase, song.title))
+                    announce += [a] if a else []
+                    self.since_announce = 0
+            print(f"{dt.datetime.now():%I:%M %p}  ▶ {song.label()}  [{TIERS[song.energy]}]")
+            play = song.full_length if song.full else min(song.full_length, self.cfg.song_play_seconds)
+            return {
+                "vid": song.video_id, "title": song.title, "artist": song.lead_artist,
+                "tier": TIERS[song.energy], "start": start_offset(song), "play": play,
+                "full": song.full, "announce": announce,
+            }
 
-    def cues_for(index: int):
-        out = []
-        for c in by_slot.get(index, []):
-            if id(c) not in played_cues:
-                played_cues.add(id(c))
-                out.append((audio.get(id(c)), c.text))
-        return out
+    def hype_now(self) -> list:
+        with self.lock:
+            a = self.speak("hype", self.writer.line("hype"))
+            self.since_announce = 0
+            return [a] if a else []
 
-    def now_playing() -> str:
-        return everything[current].label() if 0 <= current < len(everything) else "unknown"
+    def set_mode(self, mode: str):
+        with self.lock:
+            self.mode = int(mode) if mode in ("1", "2", "3", "4", "5") else "auto"
+        label = TIERS.get(self.mode, "Auto (follow the plan)") if self.mode != "auto" else "Auto (follow the plan)"
+        self.notice(f"Vibe set to {label}. It starts with the next song.")
 
-    def next_unblocked(i: int) -> int | None:
-        for j in range(i, len(everything)):
-            if not is_blocked(everything[j], *blocked):
-                return j
-        return None
-
-    while dt.datetime.now() < end_at:
-        now = dt.datetime.now()
-
-        # 1. Which song is on? Ask Chrome; else YouTube Music's history; else the clock.
-        index = None
-        if player:
-            try:
-                st = player.status()
-                index = position.get(st.get("vid")) if st else None
-            except PlayerError as e:
-                host.notice(f"Lost touch with Chrome ({e}). Announcements will play over the music.")
-                player = None
-        elif history_ok and time.monotonic() - last_history >= POLL_SECONDS:
-            last_history = time.monotonic()
-            try:
-                hist = yt.get_history()
-                index = position.get(hist[0].get("videoId") if hist else None)
-                history_failures = 0
-            except Exception:
-                history_failures += 1
-                if history_failures >= 4:
-                    history_ok = False
-                    host.notice("Can't read YouTube Music history; timing announcements by the clock.")
-        elif not history_ok:
-            elapsed = (now - started).total_seconds()
-            index = max((i for i, s in enumerate(slots) if s.start <= elapsed), default=0)
-
-        if index is not None and index != current:
-            current = index
-            with host.lock:
-                host.now = f"Now playing #{current + 1}: {now_playing()}"
-            print(f"{now:%I:%M %p}  #{current + 1} {now_playing()}")
-
-            if inserted is not None and current != inserted and return_to is not None:
-                # The inserted song finished; go back to where the plan was.
-                back, inserted, return_to = return_to, None, None
-                if back != current and jump(back):
-                    continue
-            if is_blocked(everything[current], *blocked):
-                skip_to = next_unblocked(current + 1)
-                if skip_to is not None and jump(skip_to):
-                    host.notice(f"🚫 Skipped blocked song '{everything[current].title}'.")
-                    continue
-                host.notice(f"🚫 '{everything[current].title}' is blocked. Skip it in YouTube Music.")
-            if insert is not None and player is not None and current != insert[0]:
-                target, reason = insert
-                insert = None
-                kind = "vibe_up" if reason == "boost" else "Peak 2"
-                line = fresh_line(kind, everything[target].title, f"{reason}_{now:%H%M%S}")
-                announce([line], resume=False)
-                return_to, inserted = current, target
-                jump(target)
-                continue
-            if insert is not None and player is None and everything[current].video_id == everything[insert[0]].video_id:
-                announce([fresh_line("vibe_up", everything[current].title, f"vibe_up_{now:%H%M%S}")])
-                insert = None
-            elif current < len(slots):
-                announce(cues_for(current))
-
-        # 2. Birthday block, on the clock.
-        if not birthday_done and now >= birthday_at:
-            birthday_done = True
-            b = plan.birthday_index
-            intro = [(audio.get(id(birthday_intro)), birthday_intro.text)] if birthday_intro else []
-            if player and b is not None and current != b:
-                announce(intro, resume=False)
-                inserted = return_to = None
-                jump(b)
-            else:
-                announce(intro)
-                if b is not None and current != b:
-                    host.notice(f"🎂 Birthday time! In YouTube Music, play song #{b + 1} "
-                                f"'{slots[b].song.title}' now. The cake cue follows it.")
-
-        # 3. Vibe check every few minutes.
-        if now >= next_vibe:
-            next_vibe = now + dt.timedelta(minutes=cfg.vibe_check_minutes)
-            with host.lock:
-                host.vibe_due = True
-            print("\a  📊 Vibe check! Tap a score on the control page.")
-        with host.lock:
-            new_scores, host.pending_scores = host.pending_scores, []
-            say_now, host.announce_now = host.announce_now, False
-        for n, score in enumerate(new_scores):
-            with host.lock:
-                scores = host.scores[:len(host.scores) - len(new_scores) + n + 1]
-            choice = decide(scores)
+    def add_score(self, score: int):
+        with self.lock:
+            self.scores.append(score)
+            self.vibe_due = False
+            choice = decide(self.scores)
+            cur = self.current
             decision = {"up": "energy up one tier", "hold": "hold the energy", "plan": "keep the plan"}[choice]
-            if choice == "up":
-                boost = pick_boost(everything, current, slots)
-                if boost is not None:
-                    insert = (boost, "boost")
-                    decision += f": play #{boost + 1} {everything[boost].label()} next"
-                    if player:
-                        host.notice(f"Crowd's quiet. Playing '{everything[boost].title}' next to lift the energy.")
-                    else:
-                        host.notice(f"Crowd's quiet. In YouTube Music, find #{boost + 1} "
-                                    f"'{everything[boost].title}', click ⋮ and choose Play next.")
-            elif choice == "hold":
-                host.notice("Crowd's on fire 🔥 Holding the energy, no changes.")
-            log_mood(score, now_playing(), decision)
-            print(f"  Vibe {score}: {decision}")
-        if say_now:
-            upcoming = next((c for i in range(current + 1, len(slots)) for c in by_slot.get(i, [])
-                             if id(c) not in played_cues and c.kind in
-                             ("Warm-up", "Build", "Peak", "Peak 2", "Wind-down")), None)
-            if upcoming:
-                played_cues.add(id(upcoming))
-                announce([(audio.get(id(upcoming)), upcoming.text)])
-            else:
-                nxt = everything[current + 1].title if current + 1 < len(everything) else "the next one"
-                announce([fresh_line("Peak 2", nxt, f"now_{now:%H%M%S}")])
+            if choice == "up" and cur:
+                self.one_shot_tier = min(5, cur.energy + 1)
+                self.notice(f"Crowd's quiet. Next song goes up to {TIERS[self.one_shot_tier]}.")
+            elif choice == "hold" and cur:
+                self.one_shot_tier = cur.energy
+                self.notice("Crowd's on fire 🔥 Holding the energy.")
+        log_mood(score, cur.label() if cur else "", decision)
 
-        # 4. Every minute, re-read config.yaml for new blocks and requests.
+    def request(self, text: str):
+        text = text.strip()
+        if not text:
+            return
+        req = parse_request(text)
+        match = next((s for s in self.everything if s.key == req.key), None)
+        if match is None:
+            try:
+                results = self.yt.search(f"{req.title} {req.artist}".strip(), filter="songs", limit=3)
+            except Exception:
+                results = []
+            hit = next((r for r in results if r.get("videoId") and not r.get("isExplicit")), None)
+            if not hit:
+                self.notice(f"🙋 Couldn't find '{req.title}' on YouTube Music.")
+                return
+            req.video_id = hit["videoId"]
+            req.seconds = hit.get("duration_seconds")
+            req.title = hit.get("title") or req.title
+            match = req
+            with self.lock:
+                self.everything.append(req)
+            self.add_to_playlist(req)
+        with self.lock:
+            self.played.discard(match.key)
+            self.inserts.append((match, "request"))
+        self.notice(f"🙋 Request '{match.title}' plays next.")
+
+    def add_to_playlist(self, song: Song):
+        pid = urllib.parse.parse_qs(urllib.parse.urlparse(self.playlist_link or "").query).get("list", [None])[0]
+        if pid:
+            try:
+                self.yt.add_playlist_items(pid, [song.video_id], duplicates=False)
+            except Exception:
+                pass
+
+    def block(self, what: str) -> bool:
+        with self.lock:
+            cur = self.current
+            if not cur:
+                return False
+            if what == "artist":
+                self.blocked[0].append(cur.lead_artist)
+                self.notice(f"🚫 Blocked {cur.lead_artist} for the rest of the night.")
+            else:
+                self.blocked[1].append(cur.title)
+                self.notice(f"🚫 Blocked '{cur.title}'.")
+            return True
+
+    def reload_config(self):
+        try:
+            fresh = load_config(self.config_path)
+        except Exception as e:
+            self.notice(f"config.yaml has a problem, ignoring changes: {e}")
+            return
+        with self.lock:
+            for a in fresh.blocked_artists:
+                if a not in self.blocked[0]:
+                    self.blocked[0].append(a)
+            for t in fresh.blocked_tracks:
+                if t not in self.blocked[1]:
+                    self.blocked[1].append(t)
+            new = [t for t in fresh.requested_tracks if t not in self.seen_requests]
+            self.seen_requests.update(new)
+        for t in new:
+            self.request(t)
+
+    def tick(self):
+        """Clock work: birthday block, vibe checks, config changes."""
+        now = dt.datetime.now()
+        with self.lock:
+            if not self.started:
+                return
+            if self.birthday_state == "pending" and self.birthday_at and now >= self.birthday_at:
+                self.birthday_state = "due"
+                self.force_next = True
+                self.notice("🎂 Birthday time! The DJ is starting the birthday song.")
+            if self.next_vibe and now >= self.next_vibe:
+                self.next_vibe = now + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
+                self.vibe_due = True
+                print("\a  📊 Vibe check! Tap a score on the DJ page.")
+
+    def begin(self):
+        with self.lock:
+            if self.started:
+                return
+            self.started = dt.datetime.now()
+            if self.started.date() == self.cfg.start.date():
+                self.birthday_at = self.cfg.start + dt.timedelta(minutes=self.cfg.birthday_offset_minutes)
+            else:  # rehearsal on another day: same gap from the start
+                self.birthday_at = self.started + dt.timedelta(minutes=self.cfg.birthday_offset_minutes)
+            self.next_vibe = self.started + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
+        print(f"\n🎉 Party started {self.started:%I:%M %p}. Birthday block at {self.birthday_at:%I:%M %p}.\n")
+
+    def state(self) -> dict:
+        with self.lock:
+            force, self.force_next = self.force_next, False
+            return {
+                "mode": self.mode, "notices": self.notices, "vibe_due": self.vibe_due,
+                "scores": self.scores[-6:], "force_next": force,
+                "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
+                "started": bool(self.started), "phase": self.phase_now() if self.started else None,
+            }
+
+
+def serve(director: Director) -> str:
+    page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds))
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send(self, code, body=b"", kind="text/html; charset=utf-8"):
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _json(self, obj):
+            self._send(200, json.dumps(obj).encode(), "application/json")
+
+        def do_GET(self):
+            u = urllib.parse.urlparse(self.path)
+            if u.path == "/state":
+                return self._json(director.state())
+            if u.path.startswith("/audio/"):
+                f = AUDIO_DIR / Path(urllib.parse.unquote(u.path[7:])).name
+                if f.exists():
+                    kind = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".aiff": "audio/aiff"}.get(f.suffix, "application/octet-stream")
+                    return self._send(200, f.read_bytes(), kind)
+                return self._send(404)
+            self._send(200, page.encode())
+
+        def do_POST(self):
+            u = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(u.query)
+            arg = q.get("v", [""])[0]
+            if u.path == "/start":
+                director.begin()
+                return self._json({"ok": True})
+            if u.path == "/next":
+                return self._json(director.next_track(error=arg == "error"))
+            if u.path == "/hype":
+                return self._json({"announce": director.hype_now()})
+            if u.path == "/mode":
+                director.set_mode(arg)
+            elif u.path == "/score" and arg.isdigit() and 1 <= int(arg) <= 5:
+                director.add_score(int(arg))
+            elif u.path == "/request":
+                threading.Thread(target=director.request, args=(arg,), daemon=True).start()
+            elif u.path == "/block":
+                return self._json({"skip": director.block(arg)})
+            self._json({"ok": True})
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://localhost:{PORT}/"
+
+
+def run(cfg, yt, plan, playlist_link: str | None, config_path: str):
+    AUDIO_DIR.mkdir(exist_ok=True)
+    director = Director(cfg, yt, plan, playlist_link, config_path)
+    director.prepare()
+    url = serve(director)
+    webbrowser.open(url)
+    print(f"\nThe DJ page is open: {url}")
+    print("Click the big START button on it. Keep this window and that page open all night.")
+    print("Press Ctrl-C here to finish.\n")
+    last_reload = time.monotonic()
+    end = None
+    while True:
+        director.tick()
+        if director.started and end is None:
+            end = director.started + dt.timedelta(minutes=cfg.duration_minutes + 30)
+        if end and dt.datetime.now() > end:
+            print("The party time is over; the DJ keeps playing extras until you press Ctrl-C.")
+            end = dt.datetime.max
         if time.monotonic() - last_reload > 60:
             last_reload = time.monotonic()
-            try:
-                fresh = load_config(config_path)
-            except Exception as e:
-                host.notice(f"config.yaml has a problem, ignoring changes: {e}")
-            else:
-                blocked = (list(fresh.blocked_artists), list(fresh.blocked_tracks))
-                if not player:
-                    for i in range(max(current, 0), min(current + 4, len(everything))):
-                        s = everything[i]
-                        if is_blocked(s, *blocked) and s.key not in blocked_warned:
-                            blocked_warned.add(s.key)
-                            when = "now" if i == current else "when it comes on"
-                            host.notice(f"🚫 '{s.title}' is blocked. Skip it {when} in YouTube Music.")
-                for text in fresh.requested_tracks:
-                    if text in seen_requests:
-                        continue
-                    seen_requests.add(text)
-                    found = handle_request(yt, text, everything, position, plan, playlist_link, host,
-                                           auto=player is not None)
-                    if found is not None and player is not None:
-                        insert = (found, "request")
-
-        # Check Chrome every second; history only every POLL_SECONDS.
-        for _ in range(1 if player else int(POLL_SECONDS)):
-            with host.lock:
-                if host.pending_scores or host.announce_now:
-                    break
-            time.sleep(1)
-
-    print("\nParty's over. Mood scores are in mood_log.csv. Good night!")
+            director.reload_config()
+        time.sleep(1)
 
 
-def pick_boost(everything, current: int, slots) -> int | None:
-    """Pick an unplayed song one energy tier above the current one, extras first."""
-    if not 0 <= current < len(everything):
-        return None
-    target = min(5, everything[current].energy + 1)
-    later = range(current + 2, len(everything))  # not the very next song; that's already coming
-    for tier in (target, 5):
-        extras = [i for i in later if i >= len(slots) and everything[i].energy == tier]
-        planned = [i for i in later if i < len(slots) and everything[i].energy == tier]
-        if extras or planned:
-            return (extras or planned)[0]
-    return None
-
-
-def handle_request(yt, text, everything, position, plan, playlist_link, host, auto=False) -> int | None:
-    """Find a requested song (adding it to the playlist if needed). Returns its index."""
-    how = "It plays next." if auto else "Click ⋮ on it, then Play next."
-    req = parse_request(text)
-    for i, s in enumerate(everything):
-        if s.key == req.key:
-            host.notice(f"🙋 Request '{s.title}' is #{i + 1} in the playlist. {how}")
-            return i
-    try:
-        results = yt.search(f"{req.title} {req.artist}".strip(), filter="songs", limit=3)
-    except Exception:
-        results = []
-    hit = next((r for r in results if r.get("videoId") and not r.get("isExplicit")), None)
-    if not hit:
-        host.notice(f"🙋 Couldn't find '{html.escape(req.title)}' on YouTube Music. Try adding it by hand.")
-        return None
-    if playlist_link:
-        pid = urllib.parse.parse_qs(urllib.parse.urlparse(playlist_link).query).get("list", [None])[0]
-        try:
-            yt.add_playlist_items(pid, [hit["videoId"]], duplicates=False)
-        except Exception:
-            pid = None
-        if pid:
-            req.video_id = hit["videoId"]
-            everything.append(req)
-            plan.reserve.append(req)
-            position[req.video_id] = len(everything) - 1
-            host.notice(f"🙋 Added '{html.escape(hit.get('title', req.title))}' to the end of the playlist "
-                        f"(#{len(everything)}). {how}")
-            return len(everything) - 1
-    host.notice(f"🙋 Found '{html.escape(hit.get('title', req.title))}': "
-                f"https://music.youtube.com/watch?v={hit['videoId']}")
-    return None
+PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin"><title>Party DJ</title>
+<style>
+ :root{--bg:#0d0d12;--card:#1b1b24;--pink:#ff2d7a;--txt:#f4f4f8;--dim:#a0a0b0}
+ *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--txt);text-align:center}
+ main{max-width:860px;margin:auto;padding:16px}
+ h1{margin:8px 0} .card{background:var(--card);border-radius:16px;padding:16px;margin:12px 0}
+ #start{font-size:34px;padding:22px 60px;border-radius:20px;border:0;background:var(--pink);color:#fff;cursor:pointer;margin:30px}
+ #title{font-size:28px;font-weight:700} #artist{color:var(--dim);font-size:18px}
+ #bar{height:8px;background:#333;border-radius:4px;margin-top:12px;overflow:hidden} #fill{height:100%;width:0;background:var(--pink)}
+ .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+ .mode{font-size:18px;padding:16px 18px;border-radius:14px;border:2px solid transparent;color:#fff;cursor:pointer;min-width:110px}
+ .mode.on{border-color:#fff;box-shadow:0 0 18px rgba(255,255,255,.5)}
+ .act{font-size:17px;padding:12px 18px;border-radius:12px;border:0;background:#333;color:#fff;cursor:pointer}
+ button:active{transform:scale(.95)}
+ input{font-size:17px;padding:12px;border-radius:10px;border:0;width:min(420px,100%)}
+ ul{list-style:none;padding:0;text-align:left} li{padding:8px 10px;border-bottom:1px solid #2a2a35;color:var(--dim)}
+ #overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;flex-direction:column}
+ #overlay .mode{font-size:30px;min-width:90px}
+ #toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:#2e7d32;padding:12px 22px;border-radius:12px;display:none;font-size:18px}
+ #down{background:#b71c1c;padding:12px;border-radius:12px;display:none}
+ #players{position:relative;width:320px;height:180px;margin:12px auto 0;border-radius:10px;overflow:hidden;background:#000}
+ #players iframe{position:absolute;left:0;top:0;width:320px;height:180px;pointer-events:none}
+ #voice{color:var(--pink);min-height:22px;margin-top:8px}
+</style></head><body><main>
+<div id="toast"></div>
+<h1>🎧 Party DJ</h1>
+<div id="down">The DJ program isn't running. In Terminal run: <b>python dj.py</b></div>
+<button id="start">▶ START THE PARTY</button>
+<div id="players"><div id="p0"></div><div id="p1"></div></div>
+<div id="ui" hidden>
+ <div class="card"><div id="phase" style="color:var(--dim)"></div>
+  <div id="title">…</div><div id="artist"></div><div id="voice"></div><div id="bar"><div id="fill"></div></div></div>
+ <div class="card"><b>Pick the vibe</b><div class="row" style="margin-top:10px">
+  <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
+  <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
+  <button class="mode" data-m="2" style="background:#00897b">🙂 Groove</button>
+  <button class="mode" data-m="3" style="background:#7cb342">💃 Dance</button>
+  <button class="mode" data-m="4" style="background:#fb8c00">🔥 Bangers</button>
+  <button class="mode" data-m="5" style="background:#e53935">🚀 On fire</button></div></div>
+ <div class="card row">
+  <button class="act" id="skip">⏭ Next song</button>
+  <button class="act" id="hype">🎤 Hype the crowd</button>
+  <button class="act" id="blk">🚫 Block this song</button>
+  <button class="act" id="blka">🚫 Block this artist</button></div>
+ <div class="card"><b>Request a song</b><div style="margin-top:10px">
+  <input id="req" placeholder="Song name - Artist"> <button class="act" id="reqb">Add</button></div></div>
+ <div class="card"><b>For you</b><div id="scores" style="color:var(--dim)"></div><ul id="notices"></ul></div>
+</div>
+<div id="overlay"><h2>📊 Vibe check! How's the crowd?</h2><div class="row">
+ <button class="mode" style="background:#3949ab" onclick="score(1)">1<br><small>chill</small></button>
+ <button class="mode" style="background:#00897b" onclick="score(2)">2</button>
+ <button class="mode" style="background:#7cb342" onclick="score(3)">3</button>
+ <button class="mode" style="background:#fb8c00" onclick="score(4)">4</button>
+ <button class="mode" style="background:#e53935" onclick="score(5)">5<br><small>on fire</small></button></div></div>
+</main>
+<script>
+const FADE = __FADE__, DUCK = 22, PREP = 25;
+let P = [null, null], ready = 0, active = 0, cur = null, upcoming = null, busy = false, fetching = false;
+const $ = id => document.getElementById(id);
+function toast(t){ const e=$('toast'); e.textContent=t; e.style.display='block'; clearTimeout(e.t); e.t=setTimeout(()=>e.style.display='none',2500); }
+async function post(path){ const r = await fetch(path,{method:'POST'}); if(!r.ok) throw 0; return r.json(); }
+function ramp(p, from, to, secs){ return new Promise(res=>{ const steps=Math.max(1,Math.round(secs*10)); let i=0;
+  p.setVolume(from); const t=setInterval(()=>{ i++; p.setVolume(from+(to-from)*i/steps); if(i>=steps){clearInterval(t); res();} },100); }); }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function playAudio(url, rate){ return new Promise(res=>{ const a=new Audio(url); a.playbackRate=rate||1; a.onended=res; a.onerror=res; a.play().catch(res); }); }
+async function talk(list, p){
+  if(!list || !list.length) return;
+  if(p) await ramp(p, 100, DUCK, 1);
+  for(const a of list){ $('voice').textContent='🎤 '+a.text; if(a.horn) await playAudio('/audio/horn.wav'); await playAudio(a.url, 1.08); }
+  $('voice').textContent=''; if(p) ramp(p, DUCK, 100, 1.5);
+}
+function onYouTubeIframeAPIReady(){
+  for(const i of [0,1]) P[i] = new YT.Player('p'+i,{height:'180',width:'320',playerVars:{origin:location.origin,playsinline:1,controls:0,disablekb:1},
+    events:{onReady:()=>{ready++;}, onError:()=>{ if(i===active && cur) next(true); },
+            onStateChange:e=>{ if(i===active && e.data===YT.PlayerState.ENDED && !busy) next(false); }}});
+}
+async function fetchNext(err){ fetching=true; try{ upcoming = await post('/next'+(err?'?v=error':'')); } finally { fetching=false; } }
+async function next(err){
+  if(busy) return; busy=true;
+  try{
+    if(err || !upcoming) await fetchNext(err);
+    const t = upcoming; upcoming = null;
+    if(!t || t.done){ $('title').textContent='That was the last song!'; busy=false; return; }
+    const old = cur ? P[active] : null, ni = cur ? 1-active : active, p = P[ni];
+    p.setVolume(0); p.loadVideoById({videoId:t.vid, startSeconds:t.start});
+    cur = t; active = ni; cur.until = t.start + t.play;
+    P[ni].getIframe().style.zIndex = 2; if(old) P[1-ni].getIframe().style.zIndex = 1;
+    $('title').textContent=t.title; $('artist').textContent=t.artist+'  ·  '+t.tier; $('fill').style.width='0';
+    const target = (t.announce && t.announce.length) ? DUCK : 100;
+    const fades = [ramp(p, 0, target, err||!old ? 1.5 : FADE)];
+    if(old) fades.push(ramp(old, 100, 0, FADE).then(()=>old.stopVideo()));
+    await Promise.all(fades);
+    if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; if(a.horn) await playAudio('/audio/horn.wav'); await playAudio(a.url,1.08);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
+  } catch(e){ console.log(e); } finally { busy=false; }
+}
+setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
+  if(!cur || busy) return; const p=P[active]; if(!p || !p.getCurrentTime) return;
+  const t=p.getCurrentTime(), d=p.getDuration()||0, end=Math.min(cur.until, d ? d-0.5 : cur.until), left=end-t;
+  if(d) $('fill').style.width=Math.min(100,100*(t-cur.start)/Math.max(1,end-cur.start))+'%';
+  if(left < PREP && !upcoming && !fetching) fetchNext(false);
+  if(left < FADE && upcoming) next(false);
+}, 300);
+async function load(){
+  try{ const s = await (await fetch('/state')).json(); $('down').style.display='none';
+    document.querySelectorAll('.mode[data-m]').forEach(b=>b.classList.toggle('on', String(s.mode)===b.dataset.m));
+    $('overlay').style.display = s.vibe_due ? 'flex' : 'none';
+    $('phase').textContent = s.started ? (s.phase+(s.birthday?'  ·  🎂 birthday at '+s.birthday:'')) : '';
+    $('scores').textContent = s.scores.length ? 'Vibe scores: '+s.scores.join(', ') : '';
+    $('notices').innerHTML = s.notices.map(n=>'<li>'+n.replace(/</g,'&lt;')+'</li>').join('');
+    if(s.force_next && cur){ upcoming=null; next(false); }
+  } catch(e){ $('down').style.display='block'; }
+}
+setInterval(load, 2000); load();
+$('start').onclick = async ()=>{
+  if(ready<2){ toast('Loading the player, one moment…'); return; }
+  await post('/start'); $('start').remove(); $('ui').hidden=false; next(false);
+};
+document.querySelectorAll('.mode[data-m]').forEach(b=>b.onclick=()=>post('/mode?v='+b.dataset.m).then(()=>{toast('Vibe: '+b.textContent.trim()); load();}).catch(()=>$('down').style.display='block'));
+window.score = n => post('/score?v='+n).then(()=>{toast('Vibe '+n+' saved ✓'); load();});
+$('skip').onclick = ()=>{ upcoming=null; next(false); };
+$('hype').onclick = async ()=>{ const r = await post('/hype'); talk(r.announce, P[active]); };
+$('blk').onclick = async ()=>{ const r = await post('/block?v=song'); if(r.skip){ upcoming=null; next(false);} load(); };
+$('blka').onclick = async ()=>{ const r = await post('/block?v=artist'); if(r.skip){ upcoming=null; next(false);} load(); };
+$('reqb').onclick = ()=>{ const v=$('req').value.trim(); if(!v) return; post('/request?v='+encodeURIComponent(v)).then(()=>{toast('Looking for it…'); $('req').value='';}); };
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body></html>"""
