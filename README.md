@@ -16,7 +16,7 @@ It never downloads or re-hosts audio, and never types your Google password anywh
    pip install -r requirements.txt
    cp .env.example .env
    ```
-3. **Check the config:** edit `config.yaml`, then run `python dj.py check-config`.
+3. **Check the config:** edit `config.yaml`, then run `python dj.py --check-config`.
 
 ## Sign in to YouTube Music
 
@@ -37,7 +37,7 @@ and the app sets it to be readable by you only. Treat it like a password.
    ytmusicapi browser --file browser.json
    ```
    paste the headers, press Enter, then **Ctrl-D**.
-7. Confirm it worked: `python dj.py check-auth` should print your account name.
+7. Confirm it worked: `python dj.py --check-auth` should print your account name.
 
 The headers stay valid as long as that browser session stays signed in (usually weeks).
 If `check-auth` starts failing, repeat steps 1 to 6. Re-check the day of the party.
@@ -54,6 +54,34 @@ If `check-auth` starts failing, repeat steps 1 to 6. Re-check the day of the par
 | `vibe_check_minutes` | How often to ask for a 1 to 5 vibe score |
 | `blocked_artists`, `blocked_tracks`, `requested_tracks` | Edit any time, before or during the party |
 
-## Running
+## Songs (`songs.yaml`)
 
-Test mode and the live run are being built next; this section will cover them.
+The pool the DJ picks from: title, artist, language (`hi`, `pa`, `en`), era and an energy
+score from 1 (mellow) to 5 (floor-filler). Add or remove lines freely. The planner never
+repeats a song, keeps English at or under the configured share, skips anything YouTube Music
+flags as explicit (or whose title looks explicit), and drops blocked artists and tracks.
+
+## Test mode (run this before the party)
+
+```bash
+python dj.py --test
+```
+
+It takes a few minutes and:
+
+1. Looks up every song on YouTube Music (search only; results are cached in `.cache/`).
+2. Plans the night into Warm-up, Build, Peak, the Birthday block, Peak 2 and Wind-down,
+   scaled to `duration_minutes`, with the birthday song pinned to `birthday_block_time`.
+3. Asks before creating the **private** playlist (or before replacing the tracks of an
+   existing one with the same name). Say no and nothing is created.
+4. Writes `run_sheet.md` with times, tracks, announcement cues and vibe checks, and prints it.
+5. Makes two sample announcements in `announcements/`.
+6. Asks before playing anything. If you say yes, it plays the two samples and opens two
+   30-second song previews in your browser.
+7. Prints a report: playlist link, files created, and any song it couldn't find.
+
+Run it again after changing `config.yaml` or `songs.yaml`; the same date gives the same plan.
+
+## Live run
+
+Coming next: announcements on cue, the vibe-score prompt and `mood_log.csv`.

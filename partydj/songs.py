@@ -1,0 +1,109 @@
+"""Song pool: load songs.yaml, apply blocks and requests, filter explicit titles."""
+from __future__ import annotations
+
+import re
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+DEFAULT_SECONDS = 270  # used until YouTube Music tells us the real length
+
+# Titles containing these words are skipped when no explicit flag is available.
+_EXPLICIT_WORDS = re.compile(
+    r"\b(explicit|nsfw|sexy|fuck\w*|shit\w*|bitch\w*|nigga\w*|motherf\w*)\b", re.I
+)
+
+
+def norm(text: str) -> str:
+    """Lowercase, strip accents, punctuation and bracketed bits, for matching."""
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    text = re.sub(r"[\(\[].*?[\)\]]", " ", text.lower())
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    return " ".join(text.split())
+
+
+@dataclass
+class Song:
+    title: str
+    artist: str
+    lang: str          # hi, pa or en
+    era: str
+    energy: int        # 1 mellow .. 5 floor-filler
+    requested: bool = False
+    video_id: str | None = None
+    seconds: int | None = None
+    explicit: bool = False
+
+    @property
+    def key(self) -> str:
+        return norm(self.title)
+
+    @property
+    def is_english(self) -> bool:
+        return self.lang == "en"
+
+    @property
+    def lead_artist(self) -> str:
+        return self.artist.split(",")[0].strip()
+
+    @property
+    def length(self) -> int:
+        return self.seconds or DEFAULT_SECONDS
+
+    @property
+    def url(self) -> str | None:
+        return f"https://music.youtube.com/watch?v={self.video_id}" if self.video_id else None
+
+    def label(self) -> str:
+        return f"{self.title} – {self.lead_artist}"
+
+
+def _song(row) -> Song:
+    title, artist, lang, era, energy = row
+    return Song(str(title), str(artist), str(lang), str(era), int(energy))
+
+
+def title_looks_explicit(title: str) -> bool:
+    return bool(_EXPLICIT_WORDS.search(title))
+
+
+def is_blocked(song: Song, blocked_artists: list[str], blocked_tracks: list[str]) -> bool:
+    artists = norm(song.artist)
+    if any(norm(a) and norm(a) in artists for a in blocked_artists):
+        return True
+    return any(norm(t) == song.key for t in blocked_tracks)
+
+
+def parse_request(text: str) -> Song:
+    """'Title - Artist' (artist optional). Unknown requests are treated as Hindi dance tracks."""
+    parts = re.split(r"\s+[-–]\s+", text.strip(), maxsplit=1)
+    title = parts[0]
+    artist = parts[1] if len(parts) > 1 else ""
+    return Song(title, artist, "hi", "?", 4, requested=True)
+
+
+def load_pool(path: str | Path, cfg) -> tuple[list[Song], Song]:
+    """Return (usable songs, birthday song) after blocks, requests and de-duplication."""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    birthday = _song(raw["birthday_song"])
+    songs: dict[str, Song] = {}
+    for row in raw.get("songs") or []:
+        s = _song(row)
+        songs.setdefault(s.key, s)  # no repeats even if the file lists a song twice
+
+    for text in cfg.requested_tracks:
+        req = parse_request(text)
+        if req.key in songs:
+            songs[req.key].requested = True
+        else:
+            songs[req.key] = req
+
+    usable = [
+        s for s in songs.values()
+        if s.key != birthday.key
+        and not is_blocked(s, cfg.blocked_artists, cfg.blocked_tracks)
+        and not title_looks_explicit(s.title)
+    ]
+    return usable, birthday

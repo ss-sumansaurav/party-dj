@@ -1,24 +1,33 @@
 #!/usr/bin/env python3
 """Party DJ command line.
 
-  python dj.py check-config   validate config.yaml and show the party timeline
-  python dj.py check-auth     confirm YouTube Music sign-in works
+  python dj.py --check-config   validate config.yaml and show the party timeline
+  python dj.py --check-auth     confirm YouTube Music sign-in works
+  python dj.py --test           10-minute dry run before the party
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import sys
+import time
+import webbrowser
+from pathlib import Path
 
 from partydj.config import ConfigError, load_config
 
+OUT_RUNSHEET = Path("run_sheet.md")
+OUT_ANNOUNCE = Path("announcements")
 
-def cmd_check_config(args) -> int:
+
+def ask(question: str) -> bool:
     try:
-        cfg = load_config(args.config)
-    except (ConfigError, OSError) as e:
-        print(f"Config problem: {e}")
-        return 1
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def cmd_check_config(cfg) -> int:
     bday = cfg.start + dt.timedelta(minutes=cfg.birthday_offset_minutes)
     print(f"Party for {cfg.birthday_person_name}, hosted by {cfg.host_name}")
     print(f"  {cfg.start:%a %d %b, %I:%M %p} to {cfg.end:%a %d %b, %I:%M %p} ({cfg.duration_minutes} min)")
@@ -31,7 +40,7 @@ def cmd_check_config(args) -> int:
     return 0
 
 
-def cmd_check_auth(args) -> int:
+def cmd_check_auth(cfg) -> int:
     from partydj.ytm import AuthError, check_auth
 
     try:
@@ -43,14 +52,116 @@ def cmd_check_auth(args) -> int:
     return 0
 
 
+def build_set(cfg, yt, songs_file: str):
+    """Resolve the pool on YouTube Music and plan the night. Returns (plan, cues, missing)."""
+    from partydj import planner, resolver, runsheet
+    from partydj.songs import load_pool
+
+    pool, birthday = load_pool(songs_file, cfg)
+    print(f"Looking up {len(pool) + 1} songs on YouTube Music (cached after the first run)...")
+    missing = resolver.resolve_all(yt, pool + [birthday])
+    found = [s for s in pool if s.video_id]
+    if not birthday.video_id:
+        print(f"  Birthday song not found: {birthday.label()}. Edit birthday_song in {songs_file}.")
+    plan = planner.build_plan(found, birthday, cfg)
+    runsheet.timeline(plan, cfg)
+    return plan, runsheet.cues(plan, cfg), missing
+
+
+def save_playlist(yt, cfg, plan) -> str | None:
+    """Create (or refill) the private playlist, only after the host says yes."""
+    from partydj.playlist import find_existing, fill_playlist
+
+    ids = [s.video_id for s in plan.songs if s.video_id]
+    existing = find_existing(yt, cfg.playlist_title)
+    if existing:
+        print(f"A playlist called '{cfg.playlist_title}' already exists.")
+        if not ask(f"Replace its tracks with this set of {len(ids)} songs?"):
+            return None
+    elif not ask(f"Create PRIVATE playlist '{cfg.playlist_title}' with {len(ids)} songs?"):
+        return None
+    return fill_playlist(yt, cfg.playlist_title, ids, existing)
+
+
+def cmd_test(cfg, args) -> int:
+    from partydj import announcer, runsheet
+    from partydj.ytm import AuthError, check_auth, client
+
+    started = time.monotonic()
+    print("=== Party DJ test run ===\n")
+    signed_in = True
+    try:
+        print(f"Signed in as: {check_auth()}")
+        yt = client()
+    except AuthError as e:
+        print(f"Not signed in ({e})\nContinuing without a playlist: search works signed out.")
+        from ytmusicapi import YTMusic
+
+        yt, signed_in = YTMusic(), False
+
+    plan, cue_list, missing = build_set(cfg, yt, args.songs)
+
+    playlist_url = save_playlist(yt, cfg, plan) if signed_in else None
+    OUT_RUNSHEET.write_text(runsheet.to_markdown(plan, cue_list, cfg, playlist_url), encoding="utf-8")
+    print("\n" + OUT_RUNSHEET.read_text(encoding="utf-8"))
+
+    print("Making two sample announcements...")
+    samples = []
+    for name, cue in (("sample_opening", cue_list[0]),
+                      ("sample_shoutout", next(c for c in cue_list if c.kind == "shoutout"))):
+        try:
+            samples.append(announcer.speak_to_file(cue.text, OUT_ANNOUNCE / name))
+        except RuntimeError as e:
+            print(f"  {e}")
+
+    if samples and ask("Play the samples and 30-second song previews on the speaker now?"):
+        for path in samples:
+            print(f"  Playing {path.name}")
+            announcer.play(path)
+        for song in plan.songs[:2]:
+            # YouTube's own embedded player stops itself after 30 seconds.
+            url = f"https://www.youtube.com/embed/{song.video_id}?autoplay=1&start=45&end=75"
+            print(f"  Previewing {song.label()} in your browser (stops after 30 s)")
+            webbrowser.open(url)
+            time.sleep(32)
+
+    songs = plan.songs
+    print("\n=== Report ===")
+    print(f"Playlist:      {playlist_url or 'not created'}")
+    print(f"Run-sheet:     {OUT_RUNSHEET.resolve()}  ({len(songs)} songs)")
+    print(f"Announcements: {', '.join(str(p) for p in samples) or 'none'}")
+    english = sum(s.is_english for s in songs)
+    print(f"Language mix:  {len(songs) - english} Hindi/Punjabi, {english} English")
+    if missing:
+        print(f"Not found on YouTube Music ({len(missing)}), left out:")
+        for s in missing:
+            print(f"  - {s.label()}")
+    else:
+        print("Every song was found.")
+    print(f"Took {time.monotonic() - started:.0f} s.")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="AI DJ for a home birthday party")
     p.add_argument("--config", default="config.yaml")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("check-config").set_defaults(func=cmd_check_config)
-    sub.add_parser("check-auth").set_defaults(func=cmd_check_auth)
+    p.add_argument("--songs", default="songs.yaml")
+    mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check-config", action="store_true")
+    mode.add_argument("--check-auth", action="store_true")
+    mode.add_argument("--test", action="store_true", help="10-minute dry run")
     args = p.parse_args(argv)
-    return args.func(args)
+
+    try:
+        cfg = load_config(args.config)
+    except (ConfigError, OSError) as e:
+        print(f"Config problem: {e}")
+        return 1
+    if args.check_config:
+        return cmd_check_config(cfg)
+    if args.check_auth:
+        return cmd_check_auth(cfg)
+    return cmd_test(cfg, args)
 
 
 if __name__ == "__main__":
