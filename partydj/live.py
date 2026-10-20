@@ -177,7 +177,31 @@ def decide(scores: list[int]) -> str:
     return "plan"
 
 
+def connect_player(playlist_link: str | None):
+    """Return a ChromePlayer if Chrome can be controlled, after helping the host set it up."""
+    from .player import ChromePlayer, PlayerError
+
+    pid = urllib.parse.parse_qs(urllib.parse.urlparse(playlist_link or "").query).get("list", [None])[0]
+    player = ChromePlayer(pid)
+    while True:
+        try:
+            player.check()
+            print("✓ Connected to YouTube Music in Chrome: the DJ will pause the music for each announcement.")
+            return player
+        except PlayerError as e:
+            print(f"\nTo let the DJ pause and start the music: {e}")
+            try:
+                ans = input("Fix that and press Enter to try again, or type s to skip "
+                            "(announcements will play over the music): ").strip().lower()
+            except EOFError:
+                ans = "s"
+            if ans == "s":
+                return None
+
+
 def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
+    from .player import PlayerError
+
     slots = plan.slots
     everything = plan.songs + plan.reserve
     position = {s.video_id: i for i, s in enumerate(everything) if s.video_id}
@@ -186,6 +210,7 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
         if c.kind not in ("opening", "birthday_intro"):
             by_slot.setdefault(c.before, []).append(c)
     birthday_intro = next((c for c in cue_list if c.kind == "birthday_intro"), None)
+    writer = announcer.Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-live")
 
     print("Making announcement audio...")
     audio = {}
@@ -203,64 +228,134 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
     print(f"\nControl page: {page}  (vibe buttons and messages for you)")
     if playlist_link:
         print(f"Playlist:     {playlist_link}")
-    print("\n1. Open the playlist in YouTube Music, but don't press play yet.")
-    print("2. Make sure shuffle is OFF, so it plays in order.")
+    print("\nOpen YouTube Music in Google Chrome (shuffle OFF). Don't press play: the DJ starts it.")
+    player = connect_player(playlist_link)
+
+    def announce(items, resume: bool = True):
+        """items: list of (audio path, text). With Chrome: pause, speak, resume. Without: talk over."""
+        items = [(p, t) for p, t in items if p]
+        if not items:
+            return
+        if player is None:
+            for path, text in items:
+                speaker.say(path, text)
+            return
+        try:
+            player.pause()
+        except PlayerError as e:
+            host.notice(f"Couldn't pause the music: {e}")
+        for path, text in items:
+            print(f"  🎤 {text}")
+            try:
+                announcer.play(path)
+            except RuntimeError as e:
+                print(f"  {e}")
+        if not resume:
+            return
+        try:
+            player.resume()
+        except PlayerError as e:
+            host.notice(f"Couldn't restart the music, press play in YouTube Music: {e}")
+
+    def fresh_line(kind: str, title: str, name: str):
+        text = writer.line(kind, title)
+        try:
+            return announcer.speak_to_file(text, Path("announcements") / name), text
+        except RuntimeError as e:
+            print(f"  (couldn't make that announcement: {e})")
+            return None, text
+
+    def jump(index: int) -> bool:
+        if player is None or not everything[index].video_id:
+            return False
+        try:
+            if not player.open(everything[index].video_id):
+                host.notice(f"Press play in YouTube Music to start '{everything[index].title}'.")
+            return True
+        except PlayerError as e:
+            host.notice(f"Couldn't change the song: {e}")
+            return False
+
     try:
-        input("3. Press Enter here at the same moment you press play on song 1... ")
+        input("\nPress Enter to start the party! " + (
+            "The DJ will say hello, then start song 1." if player else
+            "Press play on song 1 in YouTube Music at the same moment."))
     except EOFError:
         pass
 
     started = dt.datetime.now()
-    scheduled_start = cfg.start
-    on_party_day = started.date() == scheduled_start.date()
+    on_party_day = started.date() == cfg.start.date()
     if on_party_day:
-        birthday_at = scheduled_start + dt.timedelta(minutes=cfg.birthday_offset_minutes)
+        birthday_at = cfg.start + dt.timedelta(minutes=cfg.birthday_offset_minutes)
     else:  # a rehearsal on another day: keep the same gap from the start
         birthday_at = started + dt.timedelta(minutes=cfg.birthday_offset_minutes)
     end_at = started + dt.timedelta(minutes=cfg.duration_minutes + 15)
     print(f"Started {started:%I:%M %p}. Birthday block at {birthday_at:%I:%M %p}. Ctrl-C to stop.\n")
 
-    first = next(c for c in cue_list if c.kind == "opening")
-    if id(first) in audio:
-        speaker.say(audio[id(first)], first.text)
-
     played_cues: set[int] = set()
+    opening = next(c for c in cue_list if c.kind == "opening")
+    played_cues.add(id(opening))
+    if player:
+        announce([(audio.get(id(opening)), opening.text)], resume=False)
+        jump(0)
+    else:
+        announce([(audio.get(id(opening)), opening.text)])
+
     current = -1           # index into `everything`
     history_ok = True
     history_failures = 0
+    last_history = 0.0
     next_vibe = started + dt.timedelta(minutes=cfg.vibe_check_minutes)
     birthday_done = False
-    boost_for: str | None = None   # video id of a song chosen to lift the energy
+    insert: tuple[int, str] | None = None   # (song index, reason) to play next: boost or request
+    return_to: int | None = None            # where to go back to after an inserted song
+    inserted: int | None = None
+    blocked = (list(cfg.blocked_artists), list(cfg.blocked_tracks))
     seen_requests = set(cfg.requested_tracks)
     blocked_warned: set[str] = set()
     last_reload = time.monotonic()
 
-    def play_cues_for(index: int):
+    def cues_for(index: int):
+        out = []
         for c in by_slot.get(index, []):
-            if id(c) not in played_cues and id(c) in audio:
+            if id(c) not in played_cues:
                 played_cues.add(id(c))
-                speaker.say(audio[id(c)], c.text)
+                out.append((audio.get(id(c)), c.text))
+        return out
 
     def now_playing() -> str:
         return everything[current].label() if 0 <= current < len(everything) else "unknown"
 
+    def next_unblocked(i: int) -> int | None:
+        for j in range(i, len(everything)):
+            if not is_blocked(everything[j], *blocked):
+                return j
+        return None
+
     while dt.datetime.now() < end_at:
         now = dt.datetime.now()
 
-        # 1. Which song is on? Ask YouTube Music's history; fall back to the clock.
+        # 1. Which song is on? Ask Chrome; else YouTube Music's history; else the clock.
         index = None
-        if history_ok:
+        if player:
+            try:
+                st = player.status()
+                index = position.get(st.get("vid")) if st else None
+            except PlayerError as e:
+                host.notice(f"Lost touch with Chrome ({e}). Announcements will play over the music.")
+                player = None
+        elif history_ok and time.monotonic() - last_history >= POLL_SECONDS:
+            last_history = time.monotonic()
             try:
                 hist = yt.get_history()
-                vid = hist[0].get("videoId") if hist else None
-                index = position.get(vid)
+                index = position.get(hist[0].get("videoId") if hist else None)
                 history_failures = 0
             except Exception:
                 history_failures += 1
                 if history_failures >= 4:
                     history_ok = False
                     host.notice("Can't read YouTube Music history; timing announcements by the clock.")
-        if index is None and not history_ok:
+        elif not history_ok:
             elapsed = (now - started).total_seconds()
             index = max((i for i, s in enumerate(slots) if s.start <= elapsed), default=0)
 
@@ -269,23 +364,47 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
             with host.lock:
                 host.now = f"Now playing #{current + 1}: {now_playing()}"
             print(f"{now:%I:%M %p}  #{current + 1} {now_playing()}")
-            if boost_for and everything[current].video_id == boost_for:
-                speaker.say_text(announcer.Writer(cfg.birthday_person_name, cfg.host_name,
-                                                  seed=str(now)).line("vibe_up", everything[current].title),
-                                 f"vibe_up_{now:%H%M}")
-                boost_for = None
+
+            if inserted is not None and current != inserted and return_to is not None:
+                # The inserted song finished; go back to where the plan was.
+                back, inserted, return_to = return_to, None, None
+                if back != current and jump(back):
+                    continue
+            if is_blocked(everything[current], *blocked):
+                skip_to = next_unblocked(current + 1)
+                if skip_to is not None and jump(skip_to):
+                    host.notice(f"🚫 Skipped blocked song '{everything[current].title}'.")
+                    continue
+                host.notice(f"🚫 '{everything[current].title}' is blocked. Skip it in YouTube Music.")
+            if insert is not None and player is not None and current != insert[0]:
+                target, reason = insert
+                insert = None
+                kind = "vibe_up" if reason == "boost" else "Peak 2"
+                line = fresh_line(kind, everything[target].title, f"{reason}_{now:%H%M%S}")
+                announce([line], resume=False)
+                return_to, inserted = current, target
+                jump(target)
+                continue
+            if insert is not None and player is None and everything[current].video_id == everything[insert[0]].video_id:
+                announce([fresh_line("vibe_up", everything[current].title, f"vibe_up_{now:%H%M%S}")])
+                insert = None
             elif current < len(slots):
-                play_cues_for(current)
+                announce(cues_for(current))
 
         # 2. Birthday block, on the clock.
         if not birthday_done and now >= birthday_at:
             birthday_done = True
             b = plan.birthday_index
-            if birthday_intro and id(birthday_intro) in audio:
-                speaker.say(audio[id(birthday_intro)], birthday_intro.text)
-            if b is not None and current != b:
-                host.notice(f"🎂 Birthday time! In YouTube Music, play song #{b + 1} "
-                            f"'{slots[b].song.title}' now. The cake cue follows it.")
+            intro = [(audio.get(id(birthday_intro)), birthday_intro.text)] if birthday_intro else []
+            if player and b is not None and current != b:
+                announce(intro, resume=False)
+                inserted = return_to = None
+                jump(b)
+            else:
+                announce(intro)
+                if b is not None and current != b:
+                    host.notice(f"🎂 Birthday time! In YouTube Music, play song #{b + 1} "
+                                f"'{slots[b].song.title}' now. The cake cue follows it.")
 
         # 3. Vibe check every few minutes.
         if now >= next_vibe:
@@ -304,10 +423,13 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
             if choice == "up":
                 boost = pick_boost(everything, current, slots)
                 if boost is not None:
-                    boost_for = everything[boost].video_id
+                    insert = (boost, "boost")
                     decision += f": play #{boost + 1} {everything[boost].label()} next"
-                    host.notice(f"Crowd's quiet. In YouTube Music, find #{boost + 1} "
-                                f"'{everything[boost].title}', click ⋮ and choose Play next.")
+                    if player:
+                        host.notice(f"Crowd's quiet. Playing '{everything[boost].title}' next to lift the energy.")
+                    else:
+                        host.notice(f"Crowd's quiet. In YouTube Music, find #{boost + 1} "
+                                    f"'{everything[boost].title}', click ⋮ and choose Play next.")
             elif choice == "hold":
                 host.notice("Crowd's on fire 🔥 Holding the energy, no changes.")
             log_mood(score, now_playing(), decision)
@@ -318,11 +440,10 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
                              ("Warm-up", "Build", "Peak", "Peak 2", "Wind-down")), None)
             if upcoming:
                 played_cues.add(id(upcoming))
-                text = upcoming.text
+                announce([(audio.get(id(upcoming)), upcoming.text)])
             else:
-                text = announcer.Writer(cfg.birthday_person_name, cfg.host_name, seed=str(now)).line(
-                    "Peak 2", everything[current + 1].title if current + 1 < len(everything) else "the next one")
-            speaker.say_text(text, f"now_{now:%H%M%S}")
+                nxt = everything[current + 1].title if current + 1 < len(everything) else "the next one"
+                announce([fresh_line("Peak 2", nxt, f"now_{now:%H%M%S}")])
 
         # 4. Every minute, re-read config.yaml for new blocks and requests.
         if time.monotonic() - last_reload > 60:
@@ -332,25 +453,29 @@ def run(cfg, yt, plan, cue_list, playlist_link: str | None, config_path: str):
             except Exception as e:
                 host.notice(f"config.yaml has a problem, ignoring changes: {e}")
             else:
-                for i in range(max(current, 0), min(current + 4, len(everything))):
-                    s = everything[i]
-                    if is_blocked(s, fresh.blocked_artists, fresh.blocked_tracks) and s.key not in blocked_warned:
-                        blocked_warned.add(s.key)
-                        when = "now" if i == current else "when it comes on"
-                        host.notice(f"🚫 '{s.title}' is blocked. Skip it {when} in YouTube Music.")
+                blocked = (list(fresh.blocked_artists), list(fresh.blocked_tracks))
+                if not player:
+                    for i in range(max(current, 0), min(current + 4, len(everything))):
+                        s = everything[i]
+                        if is_blocked(s, *blocked) and s.key not in blocked_warned:
+                            blocked_warned.add(s.key)
+                            when = "now" if i == current else "when it comes on"
+                            host.notice(f"🚫 '{s.title}' is blocked. Skip it {when} in YouTube Music.")
                 for text in fresh.requested_tracks:
                     if text in seen_requests:
                         continue
                     seen_requests.add(text)
-                    handle_request(yt, text, everything, position, plan, playlist_link, host)
+                    found = handle_request(yt, text, everything, position, plan, playlist_link, host,
+                                           auto=player is not None)
+                    if found is not None and player is not None:
+                        insert = (found, "request")
 
-        for _ in range(int(POLL_SECONDS)):
+        # Check Chrome every second; history only every POLL_SECONDS.
+        for _ in range(1 if player else int(POLL_SECONDS)):
             with host.lock:
                 if host.pending_scores or host.announce_now:
                     break
             time.sleep(1)
-        else:
-            time.sleep(POLL_SECONDS % 1)
 
     print("\nParty's over. Mood scores are in mood_log.csv. Good night!")
 
@@ -369,12 +494,14 @@ def pick_boost(everything, current: int, slots) -> int | None:
     return None
 
 
-def handle_request(yt, text, everything, position, plan, playlist_link, host):
+def handle_request(yt, text, everything, position, plan, playlist_link, host, auto=False) -> int | None:
+    """Find a requested song (adding it to the playlist if needed). Returns its index."""
+    how = "It plays next." if auto else "Click ⋮ on it, then Play next."
     req = parse_request(text)
     for i, s in enumerate(everything):
         if s.key == req.key:
-            host.notice(f"🙋 Request '{s.title}' is #{i + 1} in the playlist: click ⋮ on it, then Play next.")
-            return
+            host.notice(f"🙋 Request '{s.title}' is #{i + 1} in the playlist. {how}")
+            return i
     try:
         results = yt.search(f"{req.title} {req.artist}".strip(), filter="songs", limit=3)
     except Exception:
@@ -382,7 +509,7 @@ def handle_request(yt, text, everything, position, plan, playlist_link, host):
     hit = next((r for r in results if r.get("videoId") and not r.get("isExplicit")), None)
     if not hit:
         host.notice(f"🙋 Couldn't find '{html.escape(req.title)}' on YouTube Music. Try adding it by hand.")
-        return
+        return None
     if playlist_link:
         pid = urllib.parse.parse_qs(urllib.parse.urlparse(playlist_link).query).get("list", [None])[0]
         try:
@@ -395,7 +522,8 @@ def handle_request(yt, text, everything, position, plan, playlist_link, host):
             plan.reserve.append(req)
             position[req.video_id] = len(everything) - 1
             host.notice(f"🙋 Added '{html.escape(hit.get('title', req.title))}' to the end of the playlist "
-                        f"(#{len(everything)}). Click ⋮ on it, then Play next.")
-            return
+                        f"(#{len(everything)}). {how}")
+            return len(everything) - 1
     host.notice(f"🙋 Found '{html.escape(hit.get('title', req.title))}': "
                 f"https://music.youtube.com/watch?v={hit['videoId']}")
+    return None
