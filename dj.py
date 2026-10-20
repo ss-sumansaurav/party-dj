@@ -2,6 +2,7 @@
 """Party DJ command line.
 
   python dj.py --check-config   validate config.yaml and show the party timeline
+  python dj.py --sign-in        save YouTube Music sign-in from headers on the clipboard
   python dj.py --check-auth     confirm YouTube Music sign-in works
   python dj.py --test           10-minute dry run before the party
 """
@@ -38,6 +39,37 @@ def cmd_check_config(cfg) -> int:
     if cfg.blocked_artists or cfg.blocked_tracks:
         print(f"  Blocked: {len(cfg.blocked_artists)} artists, {len(cfg.blocked_tracks)} tracks")
     return 0
+
+
+def cmd_sign_in() -> int:
+    """Read copied request headers from the Mac clipboard and save them, without printing them."""
+    import subprocess
+
+    from ytmusicapi.setup import setup_browser
+
+    from partydj.ytm import auth_file
+
+    try:
+        headers = subprocess.run(["pbpaste"], capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        print("Couldn't read the clipboard (pbpaste). Run: ytmusicapi browser --file browser.json")
+        return 1
+    if "cookie" not in headers.lower():
+        print("The clipboard doesn't hold request headers yet. Copy them from the browser and try again.")
+        return 1
+    if "sapisidhash" not in headers.lower():
+        print("Those headers have no sign-in in them. Make sure you're signed in to YouTube Music,\n"
+              "then copy the headers of a 'browse' request (method POST) and try again.")
+        return 1
+    path = auth_file()
+    try:
+        setup_browser(str(path), headers)
+    except Exception as e:
+        print(f"Couldn't read those headers ({type(e).__name__}). Copy them again and retry.")
+        return 1
+    path.chmod(0o600)
+    print(f"Saved sign-in to {path}. Checking it...")
+    return cmd_check_auth(None)
 
 
 def cmd_check_auth(cfg) -> int:
@@ -148,9 +180,12 @@ def main(argv=None) -> int:
     p.add_argument("--songs", default="songs.yaml")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check-config", action="store_true")
+    mode.add_argument("--sign-in", action="store_true")
     mode.add_argument("--check-auth", action="store_true")
     mode.add_argument("--test", action="store_true", help="10-minute dry run")
     args = p.parse_args(argv)
+    if args.sign_in:
+        return cmd_sign_in()
 
     try:
         cfg = load_config(args.config)

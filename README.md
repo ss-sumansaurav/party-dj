@@ -33,13 +33,13 @@ and the app sets it to be readable by you only. Treat it like a password.
    (Firefox: right-click the request, *Copy Value*, *Copy Request Headers*.)
 6. In the Terminal, in the `party-dj` folder, run:
    ```bash
-   pbpaste | ytmusicapi browser --file browser.json
+   python dj.py --sign-in
    ```
-   This reads the headers straight from your clipboard.
-7. Confirm it worked: `python dj.py --check-auth` should print your account name.
+   This reads the headers straight from your clipboard, saves them to `browser.json`
+   without printing them, and checks they work by printing your account name.
 
 The headers stay valid as long as that browser session stays signed in (usually weeks).
-If `check-auth` starts failing, repeat steps 1 to 6. Re-check the day of the party.
+If `python dj.py --check-auth` starts failing, repeat steps 1 to 6. Re-check the day of the party.
 
 ## Config (`config.yaml`)
 
