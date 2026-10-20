@@ -75,7 +75,7 @@ It takes a few minutes and:
 4. Writes `run_sheet.md` with times, tracks, announcement cues and vibe checks, and prints it.
 5. Makes two sample announcements in `announcements/`.
 6. Asks before playing anything. If you say yes, it plays the two samples and opens two
-   30-second song previews in your browser.
+   30-second song previews in a local browser page (click "Play previews" there).
 7. Prints a report: playlist link, files created, and any song it couldn't find.
 
 Run it again after changing `config.yaml` or `songs.yaml`; the same date gives the same plan.

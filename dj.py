@@ -13,7 +13,6 @@ import datetime as dt
 import sys
 import time
 import warnings
-import webbrowser
 from pathlib import Path
 
 # The Mac's built-in Python uses LibreSSL; urllib3 warns about it but works fine.
@@ -171,12 +170,9 @@ def cmd_test(cfg, args) -> int:
         for path in samples:
             print(f"  Playing {path.name}")
             announcer.play(path)
-        for song in plan.songs[:2]:
-            # YouTube's own embedded player stops itself after 30 seconds.
-            url = f"https://www.youtube.com/embed/{song.video_id}?autoplay=1&start=45&end=75"
-            print(f"  Previewing {song.label()} in your browser (stops after 30 s)")
-            webbrowser.open(url)
-            time.sleep(32)
+        from partydj.preview import serve_previews
+
+        serve_previews(plan.songs[:2])
 
     songs = plan.songs
     print("\n=== Report ===")
