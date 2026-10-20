@@ -64,7 +64,7 @@ The pool the DJ picks from: title, artist, language (`hi`, `pa`, `en`), era and 
 score from 1 (mellow) to 5 (floor-filler). Add or remove lines freely. The planner never
 repeats a song, keeps English at or under the configured share, skips anything YouTube Music
 flags as explicit (or whose title looks explicit), and drops blocked artists and tracks.
-Songs with energy 1 (one dot) are kept on the list but never played, unless someone requests
+Every song on the list is energy 3 or more (Suman cut the slow ones). Songs with energy 1 (one dot) are never played, unless someone requests
 one. The last block of songs is party bangers in the style Bollywood club DJs like DJ Akhil
 Talreja and DJ Suketu are known for.
 

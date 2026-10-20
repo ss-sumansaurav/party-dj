@@ -12,7 +12,7 @@ PHASE_RULES = {
     "Build":     {"energies": (3, 4),    "eras": ("80s", "90s"),        "ramp": "up"},
     "Peak":      {"energies": (4, 5),    "eras": ("90s", "2000s", "2010s", "2020s"), "ramp": None},
     "Peak 2":    {"energies": (4, 5),    "eras": ("80s", "90s", "2000s", "2010s", "2020s"), "ramp": None},
-    "Wind-down": {"energies": (1, 2),    "eras": ("60s", "70s", "90s", "2000s"), "ramp": "down"},
+    "Wind-down": {"energies": (3, 4),    "eras": ("60s", "70s", "90s", "2000s"), "ramp": "down"},
 }
 BIRTHDAY_BLOCK_MINUTES = 10  # intro cue, birthday song, cake cue, shout-out
 
