@@ -174,7 +174,14 @@ python dj.py
     device. When you stop the DJ the link closes and no more requests get through. If the link
     can't open, the QR code falls back to the home Wi-Fi address. The first time, the Mac may
     ask whether Python can accept incoming connections: click **Allow**.
-11. **Dance-floor call-out:** when the crowd camera (or your vibe scores) says people aren't
+    A request starts within a few seconds, blending out of the current song, unless a
+    requested song (or the birthday song) is playing: then it plays right after. Every request
+    is added to the YouTube Music playlist, with who asked for it in the playlist's
+    description, and saved in `requests.csv`.
+12. **🎚 Sound:** sliders for the music volume, the DJ voice volume, and how far the music dips
+    under the voice. Bass and treble can't be changed from the page (YouTube's player doesn't
+    allow it): use the speaker's own controls.
+13. **Dance-floor call-out:** when the crowd camera (or your vibe scores) says people aren't
     dancing, the DJ calls everyone to the dance floor before the next song, at most once
     every 20 minutes.
 

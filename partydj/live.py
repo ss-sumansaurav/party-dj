@@ -27,6 +27,7 @@ from .songbook import Songbook
 from .songs import Song, is_blocked, parse_request, title_looks_explicit
 
 MOOD_LOG = Path("mood_log.csv")
+REQUEST_LOG = Path("requests.csv")
 AUDIO_DIR = Path("announcements")
 PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
@@ -42,6 +43,10 @@ def clean_name(name: str) -> str:
     name = re.sub(r"[^\w\u0900-\u097F .'-]", "", name, flags=re.UNICODE)
     name = " ".join(re.sub(r"[\d_]", "", name).split())[:24]
     return "" if title_looks_explicit(name) else name
+
+
+def who_all(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def who(names: list[str]) -> str:
@@ -124,6 +129,9 @@ class Director:
         self.birthday_at: dt.datetime | None = None
         self.birthday_state = "pending"    # pending -> due -> playing -> done
         self.force_next = False
+        self.current_reason: str | None = None
+        self.request_log: dict[str, dict] = {}   # song key -> title, artist, names, first time
+        self._playlist_warned = False
         self.vibe_due = False
         self.cam_on = False                # crowd camera scores the vibe instead of the host
         self.guest_reqs: dict[str, dict] = {}   # song key -> song, names, ips, first asked
@@ -266,6 +274,7 @@ class Director:
 
             self.played.add(song.key)
             self.current = song
+            self.current_reason = reason
             # What the DJ says over the intro.
             if not self.opened:
                 self.opened = True
@@ -307,7 +316,7 @@ class Director:
             return {
                 "vid": song.video_id, "title": song.title, "artist": song.lead_artist,
                 "tier": TIERS[song.energy], "start": start, "play": play,
-                "full": song.full, "announce": announce,
+                "full": song.full, "announce": announce, "req": reason in ("guest", "request"),
             }
 
     # ---------- the songs page ----------
@@ -432,7 +441,8 @@ class Director:
         with self.lock:
             self.played.discard(match.key)
             self.inserts.append((match, "request"))
-        self.notice(f"🙋 Request '{match.title}' plays next.")
+        self.log_request(match, "the host")
+        self.notice(f"🙋 Request '{match.title}' " + ("is coming up now." if self.request_now() else "plays next."))
 
     def guest_request(self, name: str, text: str, ip: str) -> tuple[bool, str]:
         """A request from a guest's phone. The most-requested song plays first; on a tie,
@@ -461,6 +471,9 @@ class Director:
             pos = [q["song"].key for q in self.guest_queue()].index(song.key) + 1
         others = len(r["names"]) - 1
         self.notice(f"📱 {name} requested '{song.title}'" + (f" (+{others} more)" if others else ""))
+        self.log_request(song, name)
+        if self.request_now() and pos == 1:
+            return True, f"Got it, {name}! '{song.title}' starts in a few seconds 🎉"
         return True, f"Got it, {name}! '{song.title}' is number {pos} in the request queue."
 
     def guest_queue(self) -> list[dict]:
@@ -470,6 +483,62 @@ class Director:
         with self.lock:
             return [{"title": r["song"].title, "artist": r["song"].lead_artist, "count": len(r["names"]),
                      "who": who(r["names"])} for r in self.guest_queue()][:10]
+
+    def request_now(self) -> bool:
+        """Mix into the request straight away, unless a request or the birthday song is playing."""
+        with self.lock:
+            cur = self.current
+            if not self.started or not cur or cur.full or self.current_reason in ("guest", "request", "birthday"):
+                return False
+            self.force_next = True
+            return True
+
+    def putback(self, video_id: str):
+        """The page dropped a song it had lined up; let it play later."""
+        with self.lock:
+            for s in self.everything:
+                if s.video_id == video_id and (not self.current or s.key != self.current.key):
+                    self.played.discard(s.key)
+
+    def log_request(self, song: Song, name: str):
+        """Keep every request with who asked, in requests.csv and the playlist's description."""
+        with self.lock:
+            r = self.request_log.setdefault(song.key, {"song": song, "names": [], "at": dt.datetime.now()})
+            if name not in r["names"]:
+                r["names"].append(name)
+        new = not REQUEST_LOG.exists()
+        with REQUEST_LOG.open("a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(["time", "song", "artist", "requested_by"])
+            w.writerow([dt.datetime.now().isoformat(timespec="seconds"), song.title, song.artist, name])
+        threading.Thread(target=self._update_playlist, args=(song,), daemon=True).start()
+
+    def _update_playlist(self, song: Song):
+        pid = self.playlist_id()
+        if not pid:
+            return
+        with self.lock:
+            rows = sorted(self.request_log.values(), key=lambda r: r["at"])
+            lines = [f"{r['at']:%I:%M %p}".lstrip("0") + f"  {r['song'].title} – requested by {who_all(r['names'])}"
+                     for r in rows]
+        head = f"Songs requested at {self.cfg.birthday_person_name}'s party:"
+        while lines and len(head) + sum(len(l) + 1 for l in lines) > 4900:
+            lines.pop(0)  # the description has a size limit; keep the latest
+        try:
+            self.yt.add_playlist_items(pid, [song.video_id], duplicates=False)
+        except Exception:
+            pass  # usually: already in the playlist
+        try:
+            self.yt.edit_playlist(pid, description="\n".join([head] + lines))
+        except Exception as e:
+            if not self._playlist_warned:
+                self._playlist_warned = True
+                self.notice(f"Couldn't write requests into the playlist ({type(e).__name__}); "
+                            "they're saved in requests.csv on this computer.")
+
+    def playlist_id(self) -> str | None:
+        return urllib.parse.parse_qs(urllib.parse.urlparse(self.playlist_link or "").query).get("list", [None])[0]
 
     def add_to_playlist(self, song: Song):
         pid = urllib.parse.parse_qs(urllib.parse.urlparse(self.playlist_link or "").query).get("list", [None])[0]
@@ -622,6 +691,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 director.set_mode(arg)
             elif u.path == "/score" and arg.isdigit() and 1 <= int(arg) <= 5:
                 director.add_score(int(arg), "camera" if q.get("src") == ["cam"] else "host")
+            elif u.path == "/putback":
+                director.putback(arg)
             elif u.path == "/cam":
                 director.set_cam(arg == "on")
             elif u.path == "/request":
@@ -728,6 +799,8 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #players{position:relative;width:320px;height:180px;margin:12px auto 0;border-radius:10px;overflow:hidden;background:#000}
  #players iframe{position:absolute;left:0;top:0;width:320px;height:180px;pointer-events:none}
  #voice{color:var(--pink);min-height:22px;margin-top:8px}
+ .snd{display:block;margin-top:10px;color:var(--dim);font-size:14px} .snd span{float:right;color:var(--txt)}
+ .snd input{width:100%;padding:0;accent-color:var(--pink)}
 </style></head><body><main>
 <div id="toast"></div>
 <h1>🎧 __TITLE__</h1>
@@ -768,6 +841,11 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="card"><b>For you</b><div id="scores" style="color:var(--dim)"></div><ul id="notices"></ul></div>
 </div>
 <div id="side"><div class="card"><b>⏭ Up next</b><div id="nxtitle">…</div><div id="nxartist"></div></div>
+ <div class="card" style="text-align:left"><b>🎚 Sound</b>
+  <label class="snd">Music volume <span id="vmusic"></span><input type="range" id="smusic" min="0" max="100"></label>
+  <label class="snd">DJ voice volume <span id="vvoice"></span><input type="range" id="svoice" min="0" max="100"></label>
+  <label class="snd">Music under the DJ voice <span id="vduck"></span><input type="range" id="sduck" min="5" max="60"></label>
+  <div style="color:var(--dim);font-size:12px;margin-top:6px">Bass and treble: YouTube's player doesn't let web pages change them, so set those on the speaker (or its app).</div></div>
  <div class="card"><b>📱 Guests: scan to request a song</b>
   <div id="qr" style="background:#fff;padding:10px;border-radius:12px;width:fit-content;margin:10px auto"></div>
   <div id="qrurl" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
@@ -782,7 +860,10 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <button class="mode" style="background:#e53935" onclick="score(5)">5<br><small>on fire</small></button></div></div>
 </main>
 <script>
-const FADE = __FADE__, DUCK = 22, PREP = 25;
+const FADE = __FADE__, PREP = 25;
+// Sound controls (kept on this computer between runs).
+const SOUND = Object.assign({music: 100, voice: 100, duck: 22}, (()=>{ try { return JSON.parse(localStorage.getItem('dj-sound')||'{}'); } catch(e){ return {}; } })());
+let DUCK = SOUND.duck, pendingForce = false;
 let stopped = false, P = [null, null], ready = 0, active = 0, cur = null, upcoming = null, busy = false, fetching = false;
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -792,7 +873,7 @@ async function post(path){ const r = await fetch(path,{method:'POST'}); if(!r.ok
 function ramp(p, from, to, secs){ return new Promise(res=>{ const steps=Math.max(1,Math.round(secs*10)); let i=0;
   p.setVolume(from); const t=setInterval(()=>{ i++; p.setVolume(from+(to-from)*i/steps); if(i>=steps){clearInterval(t); res();} },100); }); }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-function playAudio(url, rate){ return new Promise(res=>{ const a=new Audio(url); a.playbackRate=rate||1; a.onended=res; a.onerror=res; a.play().catch(res); }); }
+function playAudio(url, rate){ return new Promise(res=>{ const a=new Audio(url); a.volume=SOUND.voice/100; a.playbackRate=rate||1; a.onended=res; a.onerror=res; a.play().catch(res); }); }
 async function talk(list, p){
   if(!list || !list.length) return;
   if(p) await ramp(p, 100, DUCK, 1);
@@ -801,7 +882,8 @@ async function talk(list, p){
 }
 function onYouTubeIframeAPIReady(){
   for(const i of [0,1]) P[i] = new YT.Player('p'+i,{height:'180',width:'320',playerVars:{origin:location.origin,playsinline:1,controls:0,disablekb:1},
-    events:{onReady:()=>{ready++;}, onError:()=>{ if(i===active && cur) next(true); },
+    events:{onReady:()=>{ const raw = P[i].setVolume.bind(P[i]);   // every level is scaled by the music volume
+              P[i].setVolume = v => { P[i]._v = v; raw(Math.round(v*SOUND.music/100)); }; ready++; }, onError:()=>{ if(i===active && cur) next(true); },
             onStateChange:e=>{ if(i===active && e.data===YT.PlayerState.ENDED && !busy) next(false); }}});
 }
 async function fetchNext(err){ fetching=true; try{ upcoming = await post('/next'+(err?'?v=error':'')); } finally { fetching=false; } }
@@ -819,7 +901,7 @@ async function next(err){
     load();
     const target = (t.announce && t.announce.length) ? DUCK : 100;
     const fades = [ramp(p, 0, target, err||!old ? 1.5 : FADE)];
-    if(old) fades.push(ramp(old, 100, 0, FADE).then(()=>old.stopVideo()));
+    if(old) fades.push(ramp(old, old._v ?? 100, 0, FADE).then(()=>old.stopVideo()));
     await Promise.all(fades);
     if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
   } catch(e){ console.log(e); } finally { busy=false; }
@@ -828,6 +910,7 @@ setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
   if(!cur || busy || stopped) return; const p=P[active]; if(!p || !p.getCurrentTime) return;
   const t=p.getCurrentTime(), d=p.getDuration()||0, end=Math.min(cur.until, d ? d-0.5 : cur.until), left=end-t;
   if(d) $('fill').style.width=Math.min(100,100*(t-cur.start)/Math.max(1,end-cur.start))+'%';
+  if(pendingForce){ pendingForce = false; forceNow(); return; }
   if(left < PREP && !upcoming && !fetching) fetchNext(false);
   if(left < FADE && upcoming) next(false);
 }, 300);
@@ -844,10 +927,23 @@ async function load(){
       : '<li style="list-style:none;margin-left:-22px;color:var(--dim)">No requests yet</li>';
     if(s.guest_url && s.guest_url !== shownQR){ shownQR = s.guest_url; $('qrurl').textContent = s.guest_url;
       $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
-    if(s.force_next && cur){ upcoming=null; next(false); }
+    if(s.force_next && cur) pendingForce = true;
   } catch(e){ $('down').style.display='block'; }
 }
-setInterval(load, 2000); load();
+setInterval(load, 1000); load();
+// A request came in: mix into it now. A request already lined up goes first.
+async function forceNow(){
+  if(busy || fetching){ pendingForce = true; return; }
+  if(upcoming && !upcoming.req){ post('/putback?v='+upcoming.vid); upcoming = null; }
+  next(false);
+}
+function applySound(){
+  try { localStorage.setItem('dj-sound', JSON.stringify(SOUND)); } catch(e){}
+  DUCK = SOUND.duck; P.forEach(p => { if(p && p._v !== undefined) p.setVolume(p._v); });
+  $('vmusic').textContent = SOUND.music+'%'; $('vvoice').textContent = SOUND.voice+'%'; $('vduck').textContent = SOUND.duck+'%';
+}
+for(const k of ['music','voice','duck']){ const el = $('s'+k); el.value = SOUND[k]; el.oninput = ()=>{ SOUND[k] = +el.value; applySound(); }; }
+applySound();
 $('start').onclick = async ()=>{
   if(ready<2){ toast('Loading the player, one moment…'); return; }
   await post('/start'); $('start').remove(); $('ui').hidden=false; next(false);
@@ -857,7 +953,7 @@ window.score = n => post('/score?v='+n).then(()=>{toast('Vibe '+n+' saved ✓');
 function setStopped(v){ stopped=v; $('stop').textContent = v ? '▶ Play music' : '⏹ Stop music'; }
 $('stop').onclick = async ()=>{
   if(!cur || busy) return; const p=P[active];
-  if(!stopped){ setStopped(true); await ramp(p, p.getVolume(), 0, 1.5); p.pauseVideo(); toast('Music stopped'); }
+  if(!stopped){ setStopped(true); await ramp(p, p._v ?? 100, 0, 1.5); p.pauseVideo(); toast('Music stopped'); }
   else { setStopped(false); p.playVideo(); ramp(p, 0, 100, 1.5); toast('Music back on'); }
 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
