@@ -141,6 +141,21 @@ def save_playlist(yt, cfg, plan) -> str | None:
     return fill_playlist(yt, cfg.playlist_title, ids, existing)
 
 
+def playlist_matches(yt, playlist_id: str, plan) -> bool:
+    """Whether the saved playlist still has the same songs as tonight's list. When songs were
+    added or removed since, the host is asked whether to update it."""
+    ids = {s.video_id for s in plan.songs + plan.reserve if s.video_id}
+    try:
+        tracks = yt.get_playlist(playlist_id, limit=None).get("tracks") or []
+    except Exception:
+        return True  # can't check, so leave it alone
+    have = {t.get("videoId") for t in tracks}
+    if not (have - ids) and not (ids - have):
+        return True
+    print(f"The playlist has {len(have - ids)} songs no longer on the list and is missing {len(ids - have)}.")
+    return False
+
+
 def cmd_test(cfg, args) -> int:
     from partydj import announcer, runsheet
     from partydj.ytm import AuthError, check_auth, client
@@ -239,7 +254,7 @@ def cmd_party(cfg, args) -> int:
     yt = client()
     plan, cue_list, missing = build_set(cfg, yt, args.songs)
     existing = find_existing(yt, cfg.playlist_title)
-    link = url(existing) if existing else save_playlist(yt, cfg, plan)
+    link = url(existing) if existing and playlist_matches(yt, existing, plan) else save_playlist(yt, cfg, plan)
     OUT_RUNSHEET.write_text(runsheet.to_markdown(plan, cue_list, cfg, link), encoding="utf-8")
     if missing:
         print(f"{len(missing)} songs weren't found on YouTube Music and are left out.")
