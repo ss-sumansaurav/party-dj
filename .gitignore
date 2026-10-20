@@ -1,0 +1,18 @@
+# Secrets: never commit
+.env
+browser.json
+oauth.json
+*.auth.json
+
+# Generated on the night
+announcements/
+mood_log.csv
+run_sheet.md
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store

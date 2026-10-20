@@ -1,0 +1,21 @@
+# Party DJ settings. Edit freely; run `python dj.py check-config` after changes.
+
+party_date: 2026-10-24
+start_time: "21:00"            # 24h clock, Mumbai time
+duration_minutes: 300          # 9 PM to 2 AM
+
+birthday_person_name: Ketan
+host_name: Poonam
+birthday_block_time: "00:00"   # midnight cake cutting; must fall inside the party
+
+language_ratio:
+  hindi: 0.7                   # at least 70% Hindi
+  english: 0.3                 # at most 30% English
+
+announcement_interval_songs: 4 # one announcement every 3-4 songs
+vibe_check_minutes: 15         # how often to ask the host for a vibe score
+
+# Add at any time, before or during the party. Matching is case-insensitive.
+blocked_artists: []
+blocked_tracks: []             # song titles, e.g. "Chaiyya Chaiyya"
+requested_tracks: []           # "Title - Artist", slotted in as early as fits

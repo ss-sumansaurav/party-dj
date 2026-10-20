@@ -1,0 +1,4 @@
+ytmusicapi>=1.12
+gTTS>=2.5
+PyYAML>=6.0
+python-dotenv>=1.0
