@@ -1,4 +1,4 @@
-"""Short Hinglish DJ lines and text-to-speech."""
+"""Short English DJ lines and text-to-speech."""
 from __future__ import annotations
 
 import random
@@ -10,52 +10,52 @@ MAX_WORDS = 32  # about 15 seconds of speech
 
 LINES = {
     "opening": [
-        "Namaste doston, aur welcome to {name} ki birthday party! {host} ne aaj ki raat full set kar di hai, toh shuru karte hain classic style mein!",
+        "Good evening everyone, and welcome to {name}'s birthday party! {host} has set up a fantastic night, so let's kick things off with the classics!",
     ],
     "Warm-up": [
-        "Kya mehfil jami hai! Gaate rahiye, kyunki ab aa raha hai {next}.",
-        "Purane gaane, nayi yaadein. Next up, {next}. Sab saath mein gaana!",
-        "Volume thoda badhao doston, aa raha hai {next}!",
-        "Yeh gaana sunke college ke din yaad aa jayenge. Next, {next}!",
+        "What a lovely crowd tonight! Keep singing along, because up next is {next}.",
+        "Old songs, new memories. Coming up, {next}. Everybody sing along!",
+        "Turn it up a little, friends, here comes {next}!",
+        "This one takes us straight back to college days. Next up, {next}!",
     ],
     "Build": [
-        "Dance floor garam ho raha hai! Chaliye, {next} ke saath thoda aur move karte hain.",
-        "Eighties aur nineties wali feeling aa rahi hai? Next up, {next}. Jootey taiyaar!",
-        "{host}, sabko floor pe laao, kyunki {next} aa raha hai!",
-        "Ab sirf taali nahi, thoda thumka bhi! Next up, {next}.",
+        "The dance floor is warming up! Let's keep moving with {next}.",
+        "Feeling those eighties and nineties vibes? Next up, {next}. Dancing shoes on!",
+        "{host}, get everyone on the floor, because {next} is coming up!",
+        "Time to clap and move! Next up, {next}.",
     ],
     "Peak": [
-        "Ab koi baitha nahi rahega! Full power mein, {next}!",
-        "Haath upar, Mumbai! Aa raha hai {next}!",
-        "{name}, yeh wala aapke liye! {next}, full volume!",
-        "Dhol bajne wala hai, ready ho jao! Next up, {next}.",
+        "Nobody stays seated now! Full power, it's {next}!",
+        "Hands up, Mumbai! Here comes {next}!",
+        "{name}, this one's for you! {next}, full volume!",
+        "Get ready, the dhol is about to drop! Next up, {next}.",
     ],
     "Peak 2": [
-        "Party abhi khatam nahi hui, doston! Next up, {next}!",
-        "Energy kam nahi honi chahiye! Balle balle, aa raha hai {next}!",
-        "Raat abhi jawaan hai doston! Full on, {next}!",
-        "Sab ek saath, floor pe! Next up, {next}.",
+        "The party is far from over, friends! Next up, {next}!",
+        "Keep that energy going! Here comes {next}!",
+        "The night is still young! Full on, {next}!",
+        "Everybody on the dance floor! Next up, {next}.",
     ],
     "Wind-down": [
-        "Raat thodi dheemi ho rahi hai, par yaadein abhi baaki hain. Suniye {next}.",
-        "Thoda aaram se, dil se. Agla gaana, {next}.",
-        "Apne partner ka haath pakdiye, aa raha hai {next}.",
+        "The night is slowing down, but the memories are just beginning. Here's {next}.",
+        "Nice and easy now, straight from the heart. Next up, {next}.",
+        "Grab your partner's hand, here comes {next}.",
     ],
     "vibe_up": [
-        "Lagta hai thoda josh chahiye! Toh lijiye, energy upar, {next}!",
-        "Chalo chalo, sab uth jao! Ab aa raha hai {next}!",
+        "Looks like we need a little more energy! Turning it up with {next}!",
+        "Come on everyone, on your feet! Here comes {next}!",
     ],
     "birthday_intro": [
-        "Attention please! Lights thodi dim karo aur cake le aao. Yeh pal hai {name} ka!",
+        "Attention please! Dim the lights and bring out the cake. This moment belongs to {name}!",
     ],
     "cake": [
-        "Teen, do, ek! Cake kaatiye {name}, aur sab milke bolo, happy birthday!",
+        "Three, two, one! Cut the cake, {name}, and everyone together, happy birthday!",
     ],
     "shoutout": [
-        "{name}, happy birthday! Dher saari khushiyaan aur pyaar. Aur thank you {host}, is shaandaar party ke liye!",
+        "Happy birthday, {name}! Wishing you lots of joy and love. And thank you, {host}, for this wonderful party!",
     ],
     "closing": [
-        "Doston, aaj ki raat yaadgaar rahi. {name}, happy birthday once again, aur {host}, thank you! Good night, Mumbai!",
+        "Friends, what a memorable night. Happy birthday once again, {name}, and thank you, {host}! Good night, Mumbai!",
     ],
 }
 

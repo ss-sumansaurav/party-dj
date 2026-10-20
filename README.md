@@ -1,7 +1,7 @@
 # Party DJ
 
 A playlist-driven "AI DJ" for a home birthday party: it builds a private YouTube Music
-playlist and a timed run-sheet, and speaks short Hinglish announcements through the speaker
+playlist and a timed run-sheet, and speaks short English announcements through the speaker
 while the host plays the playlist in the YouTube Music app or website.
 
 It never downloads or re-hosts audio, and never types your Google password anywhere.
@@ -65,7 +65,7 @@ flags as explicit (or whose title looks explicit), and drops blocked artists and
 python dj.py --test
 ```
 
-It takes a few minutes and:
+It takes a few minutes, plus about half an hour if you listen to every song, and:
 
 1. Looks up every song on YouTube Music (search only; results are cached in `.cache/`).
 2. Plans the night into Warm-up, Build, Peak, the Birthday block, Peak 2 and Wind-down,
@@ -73,9 +73,11 @@ It takes a few minutes and:
 3. Asks before creating the **private** playlist (or before replacing the tracks of an
    existing one with the same name). Say no and nothing is created.
 4. Writes `run_sheet.md` with times, tracks, announcement cues and vibe checks, and prints it.
-5. Makes two sample announcements in `announcements/`.
-6. Asks before playing anything. If you say yes, it plays the two samples and opens two
-   30-second song previews in a local browser page (click "Play previews" there).
+5. Makes two sample announcements in `announcements/`, and asks before playing them.
+6. Asks before playing 30 seconds of **every** song (about half a minute per song). It opens
+   a local browser page: click **Play previews**, use **Skip** to move on early, and press
+   Enter in Terminal when it's done. Songs whose label blocks playback outside YouTube are
+   listed in the report with a link; they still play normally in YouTube Music.
 7. Prints a report: playlist link, files created, and any song it couldn't find.
 
 Run it again after changing `config.yaml` or `songs.yaml`; the same date gives the same plan.

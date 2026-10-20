@@ -166,13 +166,16 @@ def cmd_test(cfg, args) -> int:
         except RuntimeError as e:
             print(f"  {e}")
 
-    if samples and ask("Play the samples and 30-second song previews on the speaker now?"):
+    blocked = []
+    if samples and ask("Play the two sample announcements on the speaker now?"):
         for path in samples:
             print(f"  Playing {path.name}")
             announcer.play(path)
+    minutes = len(plan.songs) * 33 // 60
+    if ask(f"Play 30 seconds of every song ({len(plan.songs)} songs, about {minutes} minutes)?"):
         from partydj.preview import serve_previews
 
-        serve_previews(plan.songs[:2])
+        blocked = serve_previews(plan.songs)
 
     songs = plan.songs
     print("\n=== Report ===")
@@ -187,6 +190,10 @@ def cmd_test(cfg, args) -> int:
             print(f"  - {s.label()}")
     else:
         print("Every song was found.")
+    if blocked:
+        print(f"Wouldn't play on the preview page ({len(blocked)}); they still play in YouTube Music:")
+        for s in blocked:
+            print(f"  - {s.label()}  {s.url}")
     print(f"Took {time.monotonic() - started:.0f} s.")
     return 0
 
