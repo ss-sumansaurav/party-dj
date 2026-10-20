@@ -1,4 +1,4 @@
-# Party DJ settings. Edit freely; run `python dj.py check-config` after changes.
+# Party DJ settings. Edit freely; run `python dj.py --check-config` after changes.
 
 party_date: 2026-10-24
 start_time: "21:00"            # 24h clock, Mumbai time

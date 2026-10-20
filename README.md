@@ -82,6 +82,33 @@ It takes a few minutes, plus about half an hour if you listen to every song, and
 
 Run it again after changing `config.yaml` or `songs.yaml`; the same date gives the same plan.
 
-## Live run
+## Party night (live run)
 
-Coming next: announcements on cue, the vibe-score prompt and `mood_log.csv`.
+Connect the Mac to the speaker, then in Terminal:
+
+```bash
+cd ~/party-dj
+source .venv/bin/activate
+python dj.py --check-auth
+python dj.py --live
+```
+
+1. It makes the night's announcements and opens a **control page** in your browser
+   (http://localhost:8765) with five big vibe buttons and messages for you.
+2. Open the playlist in YouTube Music (shuffle off). Press Enter in Terminal at the same
+   moment you press play on song 1. Leave Terminal and the control page open all night.
+3. The DJ follows along using your YouTube Music listening history: when a song starts,
+   the announcement for it plays (air horn, then the voice) over the song's intro.
+4. **Birthday block:** at `birthday_block_time` it plays the birthday intro and the control
+   page tells you to start the birthday song. The cake cue and shout-out follow it.
+5. **Vibe check** every 15 minutes: Terminal beeps and the page asks for a score. Tap 1 to 5.
+   Two scores of 1–2 in a row: the page names a livelier song; in YouTube Music click ⋮ on
+   it and choose *Play next*. Two scores of 4–5: it holds the energy. Scores go to
+   `mood_log.csv` on the Mac and nowhere else. No camera or microphone is used.
+6. **Blocks and requests:** edit `blocked_artists`, `blocked_tracks` or `requested_tracks`
+   in `config.yaml` at any time. Within a minute the page tells you to skip a blocked song,
+   or where the requested song is (it adds it to the end of the playlist if it wasn't there).
+7. **🎤 Say something now** on the page plays the next announcement straight away.
+
+Stop any time with Ctrl-C. You can rehearse on any day: it runs the same way, with the
+birthday block the same distance from when you start.
