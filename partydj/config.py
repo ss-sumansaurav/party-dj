@@ -27,6 +27,7 @@ class Config:
     blocked_artists: list[str] = field(default_factory=list)
     blocked_tracks: list[str] = field(default_factory=list)
     requested_tracks: list[str] = field(default_factory=list)
+    dj_voice: str = "en-US-BrianNeural"
 
     @property
     def start(self) -> dt.datetime:
@@ -93,6 +94,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         blocked_artists=[str(x) for x in raw.get("blocked_artists") or []],
         blocked_tracks=[str(x) for x in raw.get("blocked_tracks") or []],
         requested_tracks=[str(x) for x in raw.get("requested_tracks") or []],
+        dj_voice=str(raw.get("dj_voice") or "en-US-BrianNeural"),
     )
 
     if not 30 <= cfg.duration_minutes <= 600:

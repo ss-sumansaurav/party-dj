@@ -12,52 +12,52 @@ MAX_WORDS = 32  # about 15 seconds of speech
 
 LINES = {
     "opening": [
-        "Ladies and gentlemen, make some noise! Welcome to {name}'s birthday bash! {host} has cooked up one massive night, so let's go, let's go, let's go!",
+        "Yo yo yo, what's up Mumbai! Welcome to {name}'s birthday bash, and no cap, {host} absolutely understood the assignment. Main character energy only tonight. Let's gooo!",
     ],
     "Warm-up": [
-        "Ohhh, I hear you singing out there! Louder, Mumbai! Up next, the legend, {next}!",
-        "Golden oldies, golden people! Everybody sing with me, here comes {next}!",
-        "Volume up, hands up, voices up! It's {next}!",
-        "Throwback time, baby! Take a trip down memory lane with {next}!",
+        "Okay okay, the vibes are already immaculate, fr fr. Up next, a total classic, {next}. Sing it, besties!",
+        "Lowkey this one is pure nostalgia, highkey a banger. It's {next}, let's vibe!",
+        "Sheesh, this crowd's got aura! Turn it up for {next}!",
+        "It's giving retro, it's giving iconic. Here comes {next}!",
     ],
     "Build": [
-        "The floor is heating up! Are you ready? I said, are you ready? Here comes {next}!",
-        "Eighties and nineties in the house! Dancing shoes on, it's {next}!",
-        "{host}, grab everybody and hit that floor! {next}, let's go!",
-        "Clap your hands, move those feet! Disco fever is here with {next}!",
+        "Okayyy, the dance floor is heating up and I'm here for it! Let's go, {next}!",
+        "Eighties and nineties are back and honestly? Goated. It's {next}, no skips!",
+        "{host}, get the squad on the floor, it's literally {next}. We move!",
+        "Vibe check: passed! Keep that energy, here comes {next}!",
     ],
     "Peak": [
-        "Nobody sits down now! Full power, full volume, it's {next}!",
-        "Hands in the air, Mumbai! Make some noise for {next}!",
-        "{name}, this one is all for you! Turn it up, it's {next}!",
-        "Get ready, the dhol is about to drop! Balle balle, here comes {next}!",
+        "Bro, this is where it gets unreal! Hands up for {next}!",
+        "No cap, this one slaps so hard. Full volume, it's {next}!",
+        "{name}, this one's for you, birthday legend! Absolute W incoming, {next}!",
+        "The dhol is about to drop and it's gonna be bussin! Balle balle, {next}!",
     ],
     "Peak 2": [
-        "Did you think we were done? No way! The party just got bigger with {next}!",
-        "Keep that fire burning! Jump with me, it's {next}!",
-        "The night is young and so are we! Full on, {next}!",
-        "Everybody on the dance floor, right now! Here comes {next}!",
+        "You thought we were done? Not a chance, bestie! It's {next}!",
+        "This party is straight up legendary. Keep it going, {next}!",
+        "We are so back! Everyone on the floor for {next}!",
+        "The energy is unmatched, fr fr. Let's go, {next}!",
     ],
     "Wind-down": [
-        "What a night, what a crowd! Slow it down and sway with me to {next}.",
-        "Grab someone you love, hold them close, here comes {next}.",
-        "From the heart, for all of you. Sing it together, it's {next}!",
+        "Okay, slowing it down, but the vibes stay elite. Here's {next}.",
+        "Grab your favourite person, it's a soft-launch moment. Here's {next}.",
+        "Big feels incoming, no cap. Sing along, it's {next}.",
     ],
     "vibe_up": [
-        "Oh, I think we need more energy! Get up, get up, get up! It's {next}!",
-        "Come on, Mumbai, I can't hear you! Let's go, here comes {next}!",
+        "Hold up, the vibe's a little sleepy. We don't do that here! Wake up, it's {next}!",
+        "Okay squad, I need more energy, like right now! Here comes {next}, let's goooo!",
     ],
     "birthday_intro": [
-        "Attention, attention! Lights down, cake out! It's the moment we've all been waiting for. Everybody, make some noise for {name}!",
+        "Okay everybody, attention please! Lights down, cake out. It's {name}'s main character moment, so make some noise!",
     ],
     "cake": [
         "Three, two, one! Cut that cake, {name}! Everybody together, happy birthday!",
     ],
     "shoutout": [
-        "Happy birthday, {name}! You are a superstar! A huge round of applause, and big love to {host} for this amazing party!",
+        "Happy birthday {name}, you absolute legend! Another year of pure W energy. Huge shoutout to {host}, this party ate and left no crumbs!",
     ],
     "closing": [
-        "What a night, Mumbai! You were incredible! Happy birthday once again, {name}, and thank you, {host}! Good night, and party on!",
+        "Mumbai, you were iconic tonight, no cap! Happy birthday again, {name}, and {host}, this party was goated. Peace out, love you all!",
     ],
 }
 
@@ -82,9 +82,37 @@ class Writer:
         return text
 
 
-def speak_to_file(text: str, path: Path) -> Path:
-    """Write speech audio. Uses gTTS (Indian English voice); falls back to the Mac's `say`."""
+DJ_VOICE = "en-US-BrianNeural"  # young, casual male neural voice; change in config.yaml (dj_voice)
+_warned = False
+
+
+def _edge_tts(text: str, out: Path, voice: str):
+    import asyncio
+
+    import edge_tts
+
+    async def go():
+        await edge_tts.Communicate(text, voice, rate="+5%", pitch="+4Hz").save(str(out))
+
+    asyncio.run(go())
+    if not out.exists() or out.stat().st_size < 1000:
+        raise RuntimeError("edge-tts returned no audio")
+
+
+def speak_to_file(text: str, path: Path, voice: str | None = None) -> Path:
+    """Write speech audio with a young male neural voice (edge-tts).
+    Falls back to gTTS, then to the Mac's `say`."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        out = path.with_suffix(".mp3")
+        _edge_tts(text, out, voice or DJ_VOICE)
+        return out
+    except Exception as e:
+        global _warned
+        if not _warned:
+            _warned = True
+            print(f"  (DJ voice unavailable, using the backup voice: {type(e).__name__}. "
+                  "Check the internet connection and run: pip install -r requirements.txt)")
     try:
         from gtts import gTTS
 
@@ -94,7 +122,7 @@ def speak_to_file(text: str, path: Path) -> Path:
     except Exception as gtts_error:
         if shutil.which("say"):
             out = path.with_suffix(".aiff")
-            voice = ["-v", "Rishi"] if _has_voice("Rishi") else []
+            voice = ["-v", "Rishi"] if _has_voice("Rishi") else (["-v", "Daniel"] if _has_voice("Daniel") else [])
             subprocess.run(["say", *voice, "-r", "205", "-o", str(out), text], check=True)
             return out
         raise RuntimeError(f"Couldn't make speech audio: {gtts_error}") from gtts_error

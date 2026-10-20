@@ -1,7 +1,7 @@
 # Party DJ
 
 A playlist-driven "AI DJ" for a home birthday party: it builds a private YouTube Music
-playlist and a timed run-sheet, and speaks short English announcements through the speaker
+playlist and a timed run-sheet, and speaks short, high-energy English announcements in a Gen Z DJ voice through the speaker
 while the host plays the playlist in the YouTube Music app or website.
 
 It never downloads or re-hosts audio, and never types your Google password anywhere.
@@ -50,6 +50,7 @@ If `python dj.py --check-auth` starts failing, repeat steps 1 to 6. Re-check the
 | `language_ratio` | Hindi share must be at least 0.7 |
 | `announcement_interval_songs` | 3 or 4 |
 | `vibe_check_minutes` | How often to ask for a 1 to 5 vibe score |
+| `dj_voice` | The DJ's voice (a young male neural voice by default; needs internet when announcements are made) |
 | `blocked_artists`, `blocked_tracks`, `requested_tracks` | Edit any time, before or during the party |
 
 ## Songs (`songs.yaml`)

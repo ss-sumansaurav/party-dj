@@ -248,6 +248,9 @@ def main(argv=None) -> int:
     except (ConfigError, OSError) as e:
         print(f"Config problem: {e}")
         return 1
+    from partydj import announcer
+
+    announcer.DJ_VOICE = cfg.dj_voice
     if args.check_config:
         return cmd_check_config(cfg)
     if args.check_auth:

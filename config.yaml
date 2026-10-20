@@ -12,6 +12,10 @@ language_ratio:
   hindi: 0.7                   # at least 70% Hindi
   english: 0.3                 # at most 30% English
 
+# DJ voice (Microsoft neural voice via edge-tts). Other young male options:
+# en-US-AndrewNeural, en-US-ChristopherNeural, en-GB-RyanNeural, en-IN-PrabhatNeural
+dj_voice: en-US-BrianNeural
+
 announcement_interval_songs: 4 # one announcement every 3-4 songs
 vibe_check_minutes: 15         # how often to ask the host for a vibe score
 
