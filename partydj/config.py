@@ -31,7 +31,8 @@ class Config:
     name_pronunciations: dict = field(default_factory=dict)
     hindi_voice: str = "hi-IN-MadhurNeural"
     hindi_announcement_share: float = 0.35
-    song_play_seconds: int = 165
+    song_play_min_seconds: int = 90
+    song_play_max_seconds: int = 150
     crossfade_seconds: int = 6
 
     @property
@@ -103,7 +104,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         hindi_voice=str(raw.get("hindi_voice") or "hi-IN-MadhurNeural"),
         hindi_announcement_share=float(raw.get("hindi_announcement_share", 0.35)),
         name_pronunciations={str(k): str(v) for k, v in (raw.get("name_pronunciations") or {}).items()},
-        song_play_seconds=int(raw.get("song_play_seconds", 165)),
+        song_play_min_seconds=int(raw.get("song_play_min_seconds", 90)),
+        song_play_max_seconds=int(raw.get("song_play_max_seconds", 150)),
         crossfade_seconds=int(raw.get("crossfade_seconds", 6)),
     )
 
@@ -111,8 +113,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         raise ConfigError("duration_minutes should be between 30 and 600")
     if not 3 <= cfg.announcement_interval_songs <= 4:
         raise ConfigError("announcement_interval_songs should be 3 or 4")
-    if not 60 <= cfg.song_play_seconds <= 600:
-        raise ConfigError("song_play_seconds should be between 60 and 600")
+    if not 30 <= cfg.song_play_min_seconds <= cfg.song_play_max_seconds <= 600:
+        raise ConfigError("song_play_min_seconds and song_play_max_seconds should be 30 to 600, min first")
     if not 0 <= cfg.hindi_announcement_share <= 1:
         raise ConfigError("hindi_announcement_share should be between 0 and 1")
     if not 0 <= cfg.crossfade_seconds <= 15:

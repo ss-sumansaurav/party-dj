@@ -37,7 +37,7 @@ class Song:
     explicit: bool = False
     full: bool = False  # play the whole song (the birthday song)
 
-    # DJ mode plays only part of each song; set from config (song_play_seconds).
+    # DJ mode plays only part of each song; set from config (song_play_min/max_seconds).
     play_cap = None
     crossfade = 0
 
@@ -61,7 +61,7 @@ class Song:
     def length(self) -> int:
         """How long this song takes in the set, after DJ trimming and the crossfade overlap."""
         n = self.full_length
-        if self.play_cap and not self.full:
+        if self.play_cap:
             n = min(n, self.play_cap)
         return max(30, n - self.crossfade)
 

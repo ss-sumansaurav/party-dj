@@ -51,7 +51,7 @@ If `python dj.py --check-auth` starts failing, repeat steps 1 to 6. Re-check the
 | `language_ratio` | Hindi share must be at least 0.7 |
 | `announcement_interval_songs` | 3 or 4 |
 | `vibe_check_minutes` | How often to ask for a 1 to 5 vibe score |
-| `song_play_seconds` | How long each song plays before the DJ mixes into the next (default 165; the birthday song plays in full) |
+| `song_play_min_seconds`, `song_play_max_seconds` | Every song plays between these lengths (default 90 to 150 seconds); the DJ mixes out at a pause in the singing |
 | `crossfade_seconds` | Length of the smooth blend between songs (default 6) |
 | `dj_voice` | The DJ's voice (a young male neural voice by default; needs internet when announcements are made) |
 | `hindi_voice`, `hindi_announcement_share` | Voice for the Hindi and Hinglish announcements, and how many of them (0.35 = about a third) |
@@ -97,6 +97,8 @@ the songs, then tap **▶ START THE PARTY**. Connect the phone to the speaker by
 
 - Everything on the DJ page works: vibe buttons, requests with 🎙 Speak, Stop, Up next,
   blocks, the songs page and the crowd camera. Announcements need the internet.
+- Guest requests by QR code work for guests on the same Wi-Fi as the phone (the public link
+  is Mac only).
 - The app finds songs without signing in. It doesn't create or change the YouTube Music
   playlist; make that from the Mac with `python dj.py --test`.
 - Keep the app open with the phone on charge. The screen stays on by itself; leaving the
@@ -133,7 +135,8 @@ python dj.py
 2. It plans the set, checks the playlist (it asks before creating one) and opens the
    **DJ page** in your browser (http://localhost:8765).
 3. Click **▶ START THE PARTY**. The DJ says hello and the music starts. Leave the page open.
-4. **DJ mixing:** each song plays for about 2¾ minutes (`song_play_seconds`), skipping a few
+4. **DJ mixing:** each song plays for 90 to 150 seconds. The DJ picks the mix point at a pause
+   in the singing (from YouTube Music's timed lyrics), skipping a few
    seconds of long intros, then blends into the next song over `crossfade_seconds`.
 5. **Announcements** every few songs, spoken over the start of a song with the music turned
    down, in a young American DJ voice. Its speed, pitch and loudness follow the energy: calm
@@ -144,7 +147,7 @@ python dj.py
    Bangers or On fire switch the music to that energy from the next song, until you pick
    Auto again.
 7. **Birthday block:** at `birthday_block_time` the DJ blends straight into the birthday
-   intro and plays the birthday song in full, then the cake cue and the shout-out.
+   intro and plays the birthday song, then the cake cue and the shout-out.
 8. **Vibe check** every 15 minutes: the page asks for a score from 1 to 5. Two scores of 1–2
    in a row lift the next song one energy level; two of 4–5 hold the energy. Scores go to
    `mood_log.csv` on the Mac and nowhere else. The microphone is only used when you press
@@ -163,12 +166,14 @@ python dj.py
    shows what plays after the current song. Edits to
    `blocked_*` and `requested_tracks` in `config.yaml` are also picked up within a minute.
 
-10. **Guest requests by QR code:** the DJ page shows a QR code. Guests on the same Wi-Fi scan
-    it, type their name and a song, and the DJ plays it next and says who asked for it. The
-    song most people asked for plays first; on a tie, whoever asked first. Each phone can have
-    3 songs waiting, and "+ Me too" adds a vote. Only the request page is reachable from other
-    phones; the DJ controls stay on this device. The first time, the Mac may ask whether
-    Python can accept incoming connections: click **Allow**.
+10. **Guest requests by QR code:** the DJ page shows a QR code. Guests scan it, type their name
+    and a song, and the DJ plays it next and says who asked for it. The song most people asked
+    for plays first; on a tie, whoever asked first. "+ Me too" adds a vote. The QR code is a
+    public link (a free Cloudflare tunnel, set up by itself the first time), so it works on
+    mobile data or any Wi-Fi. Only the request page is behind it; the DJ controls stay on this
+    device. When you stop the DJ the link closes and no more requests get through. If the link
+    can't open, the QR code falls back to the home Wi-Fi address. The first time, the Mac may
+    ask whether Python can accept incoming connections: click **Allow**.
 11. **Dance-floor call-out:** when the crowd camera (or your vibe scores) says people aren't
     dancing, the DJ calls everyone to the dance floor before the next song, at most once
     every 20 minutes.

@@ -64,7 +64,8 @@ def _start(files_dir: str):
             yt = None
     yt = yt or YTMusic()  # song search works without signing in
 
-    Song.play_cap, Song.crossfade = cfg.song_play_seconds, cfg.crossfade_seconds
+    Song.play_cap = (cfg.song_play_min_seconds + cfg.song_play_max_seconds) // 2  # for planning
+    Song.crossfade = cfg.crossfade_seconds
     pool, birthday = load_pool("songs.yaml", cfg)
     total = len(pool) + 1
     _say(f"Finding {total} songs on YouTube Music…")
@@ -82,4 +83,5 @@ def _start(files_dir: str):
         STATUS["ready"] = True
         _say("Ready")
 
-    live.run(cfg, yt, plan, None, "config.yaml", "songs.yaml", open_browser=False, on_ready=ready)
+    live.run(cfg, yt, plan, None, "config.yaml", "songs.yaml", open_browser=False, on_ready=ready,
+             public=False)  # Android can't run the tunnel program; guests use the Wi-Fi

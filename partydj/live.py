@@ -20,7 +20,7 @@ import urllib.parse
 import webbrowser
 from pathlib import Path
 
-from . import announcer
+from . import announcer, cuts
 from .config import load_config
 from .planner import PHASE_RULES, Slot
 from .songbook import Songbook
@@ -30,7 +30,8 @@ MOOD_LOG = Path("mood_log.csv")
 AUDIO_DIR = Path("announcements")
 PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
-GUEST_LIMIT = 3            # songs one guest phone can have waiting
+GUEST_PORT = 8766          # request page only, for the public link
+PUBLIC = {"url": None}     # the public link, once it's open
 DANCE_CALL_GAP = 20 * 60   # seconds between "come to the dance floor" call-outs
 TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2"}
 
@@ -60,6 +61,8 @@ def lan_ip() -> str | None:
 
 
 def guest_url() -> str | None:
+    if PUBLIC["url"]:
+        return PUBLIC["url"] + "/req"
     ip = lan_ip()
     return f"http://{ip}:{PORT}/req" if ip else None
 
@@ -154,7 +157,12 @@ class Director:
         return {"url": f"/audio/{path.name}", "text": text}
 
     def prepare(self):
-        """Make the fixed announcements before the party starts."""
+        """Make the fixed announcements before the party starts, and look up mix points."""
+        def warm():
+            for s in self.plan.songs + self.plan.reserve:
+                if s.video_id:
+                    cuts.lyric_lines(self.yt, s.video_id)
+        threading.Thread(target=warm, daemon=True).start()
         print("Making announcements...")
         w = self.writer
         for kind in ("opening", "birthday_intro", "cake", "shoutout", "closing"):
@@ -292,10 +300,13 @@ class Director:
                     announce += [a] if a else []
                     self.since_announce = 0
             print(f"{dt.datetime.now():%I:%M %p}  ▶ {song.label()}  [{TIERS[song.energy]}]")
-            play = song.full_length if song.full else min(song.full_length, self.cfg.song_play_seconds)
+            start = start_offset(song)
+            play = cuts.best_play(song.full_length, start, cuts.lyric_lines(self.yt, song.video_id),
+                                  self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds,
+                                  self.cfg.crossfade_seconds)
             return {
                 "vid": song.video_id, "title": song.title, "artist": song.lead_artist,
-                "tier": TIERS[song.energy], "start": start_offset(song), "play": play,
+                "tier": TIERS[song.energy], "start": start, "play": play,
                 "full": song.full, "announce": announce,
             }
 
@@ -432,10 +443,6 @@ class Director:
             return False, "Please write your name."
         if not text:
             return False, "Please write the song name."
-        with self.lock:
-            mine = [r for r in self.guest_reqs.values() if ip in r["ips"]]
-        if len(mine) >= GUEST_LIMIT:
-            return False, f"You already have {GUEST_LIMIT} songs waiting. Ask again once one has played!"
         song = self.find_song(text)
         if song is None:
             return False, "Couldn't find that song. Try adding the singer's name."
@@ -542,7 +549,7 @@ class Director:
             }
 
 
-def serve(director: Director, songbook: Songbook) -> str:
+def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
     title = html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party DJ")
     page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds)).replace("__TITLE__", title)
     guest_page = GUEST_PAGE.replace("__TITLE__", html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party"))
@@ -558,9 +565,12 @@ def serve(director: Director, songbook: Songbook) -> str:
         def _json(self, obj):
             self._send(200, json.dumps(obj).encode(), "application/json")
 
+        public = False  # True on the server behind the public link
+
         def _guest(self, method: str, u) -> bool:
             """Guests' phones reach only the request page; everything else is for this device."""
-            if self.client_address[0].startswith("127.") or self.client_address[0] == "::1":
+            ip = (self.headers.get("Cf-Connecting-Ip") or "public") if self.public else self.client_address[0]
+            if not self.public and (ip.startswith("127.") or ip == "::1"):
                 if not (u.path in ("/req", "/api/queue") or (method == "POST" and u.path == "/api/req")):
                     return False
             if method == "GET" and u.path == "/req":
@@ -569,7 +579,7 @@ def serve(director: Director, songbook: Songbook) -> str:
                 self._json({"queue": director.queue_view(), "now": director.current.title if director.current else None})
             elif method == "POST" and u.path == "/api/req":
                 q = urllib.parse.parse_qs(u.query)
-                ok, msg = director.guest_request(q.get("name", [""])[0], q.get("song", [""])[0], self.client_address[0])
+                ok, msg = director.guest_request(q.get("name", [""])[0], q.get("song", [""])[0], ip)
                 self._json({"ok": ok, "msg": msg})
             else:
                 self._send(403, b"This page is only for the DJ's device.", "text/plain")
@@ -623,20 +633,48 @@ def serve(director: Director, songbook: Songbook) -> str:
         def log_message(self, *args):
             pass
 
+    class GuestHandler(Handler):
+        public = True
+
     # Open to the Wi-Fi so guests can scan the QR code; only the request page is shared.
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+        guests = http.server.ThreadingHTTPServer(("127.0.0.1", GUEST_PORT), GuestHandler)
+    except OSError:
+        raise SystemExit("The DJ is already running in another Terminal window. Close that one first "
+                         "(press Ctrl-C in it), then run python dj.py again.") from None
+    for srv in (server, guests):
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    if public:
+        threading.Thread(target=open_public_link, args=(director,), daemon=True).start()
     return f"http://localhost:{PORT}/"
 
 
+def open_public_link(director: Director):
+    """Give the request page a public web address, so guests on mobile data can use it too.
+    Only the request page is behind it, and it closes when the DJ stops."""
+    try:
+        from pycloudflared import try_cloudflare
+
+        urls = try_cloudflare(port=GUEST_PORT, verbose=False)
+    except Exception as e:
+        director.notice(f"📱 Couldn't open the public request link ({type(e).__name__}); "
+                        "guests can still use the QR code on the Wi-Fi.")
+        return
+    # Keep reading the tunnel's log so it never stalls on a full pipe.
+    threading.Thread(target=lambda: [None for _ in urls.process.stderr], daemon=True).start()
+    PUBLIC["url"] = urls.tunnel
+    director.notice("📱 Guests can now request songs from any network: the QR code has the public link.")
+
+
 def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: str = "songs.yaml",
-        open_browser: bool = True, on_ready=None):
+        open_browser: bool = True, on_ready=None, public: bool = True):
     AUDIO_DIR.mkdir(exist_ok=True)
     director = Director(cfg, yt, plan, playlist_link, config_path)
     director.prepare()
     book = Songbook(songs_path, yt, director)
     book.page_title = f"{cfg.birthday_person_name}'s party songs"
-    url = serve(director, book)
+    url = serve(director, book, public)
     if on_ready:
         on_ready(url)
     if open_browser:
@@ -919,7 +957,7 @@ async function ask(song){
   try {
     const r = await (await fetch('/api/req?'+new URLSearchParams({name, song}), {method:'POST'})).json();
     $('msg').className = r.ok ? 'ok' : 'bad'; $('msg').textContent = r.msg; if(r.ok) $('song').value = '';
-  } catch(e){ $('msg').className='bad'; $('msg').textContent = "Couldn't reach the DJ. Are you on the party Wi-Fi?"; }
+  } catch(e){ $('msg').className='bad'; $('msg').textContent = "The DJ isn't taking requests right now."; }
   $('go').disabled = false; load();
 }
 $('go').onclick = () => { const s = $('song').value.trim(); if(!s){ $('msg').className='bad'; $('msg').textContent='Write a song name.'; return; } ask(s); };

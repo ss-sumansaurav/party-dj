@@ -24,7 +24,8 @@ name_pronunciations:
   Poonam: Poonum
 
 # DJ mixing: how much of each song to play, and how long songs blend into each other.
-song_play_seconds: 165         # about 2 min 45 s per song (the birthday song plays in full)
+song_play_min_seconds: 90      # every song plays between these two lengths; the DJ mixes out
+song_play_max_seconds: 150     # at the best moment in between (a pause in the singing)
 crossfade_seconds: 6
 
 announcement_interval_songs: 4 # one announcement every 3-4 songs

@@ -113,7 +113,8 @@ def build_set(cfg, yt, songs_file: str):
 
     from partydj.songs import Song
 
-    Song.play_cap, Song.crossfade = cfg.song_play_seconds, cfg.crossfade_seconds
+    Song.play_cap = (cfg.song_play_min_seconds + cfg.song_play_max_seconds) // 2  # for planning
+    Song.crossfade = cfg.crossfade_seconds
     pool, birthday = load_pool(songs_file, cfg)
     print(f"Looking up {len(pool) + 1} songs on YouTube Music (cached after the first run)...")
     missing = resolver.resolve_all(yt, pool + [birthday])
