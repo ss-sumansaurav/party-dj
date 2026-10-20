@@ -27,7 +27,8 @@ class Config:
     blocked_artists: list[str] = field(default_factory=list)
     blocked_tracks: list[str] = field(default_factory=list)
     requested_tracks: list[str] = field(default_factory=list)
-    dj_voice: str = "en-IN-PrabhatNeural"
+    dj_voice: str = "en-US-AndrewNeural"
+    name_pronunciations: dict = field(default_factory=dict)
     song_play_seconds: int = 165
     crossfade_seconds: int = 6
 
@@ -96,7 +97,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         blocked_artists=[str(x) for x in raw.get("blocked_artists") or []],
         blocked_tracks=[str(x) for x in raw.get("blocked_tracks") or []],
         requested_tracks=[str(x) for x in raw.get("requested_tracks") or []],
-        dj_voice=str(raw.get("dj_voice") or "en-IN-PrabhatNeural"),
+        dj_voice=str(raw.get("dj_voice") or "en-US-AndrewNeural"),
+        name_pronunciations={str(k): str(v) for k, v in (raw.get("name_pronunciations") or {}).items()},
         song_play_seconds=int(raw.get("song_play_seconds", 165)),
         crossfade_seconds=int(raw.get("crossfade_seconds", 6)),
     )

@@ -92,11 +92,12 @@ class Director:
         with self.lock:
             self.notices = ([f"{dt.datetime.now():%I:%M %p}  {text}"] + self.notices)[:10]
 
-    def speak(self, kind: str, text: str) -> dict | None:
+    def speak(self, kind: str, text: str, energy: int | None = None) -> dict | None:
         self.n_audio += 1
         name = f"live_{self.n_audio:03d}_{kind.replace(' ', '_')}"
         try:
-            path = announcer.speak_to_file(text, AUDIO_DIR / name)
+            path = announcer.speak_to_file(text, AUDIO_DIR / name,
+                                           energy=energy or announcer.KIND_ENERGY.get(kind, 3))
         except RuntimeError as e:
             print(f"  (couldn't make an announcement: {e})")
             return None
@@ -219,7 +220,7 @@ class Director:
                     announce += [a] if a else []
                 elif self.since_announce >= self.cfg.announcement_interval_songs:
                     phase = self.phase_now() if self.mode == "auto" else TIER_LINES[self.mode]
-                    a = self.speak(phase, self.writer.line(phase, song.title))
+                    a = self.speak(phase, self.writer.line(phase, song.title), song.energy)
                     announce += [a] if a else []
                     self.since_announce = 0
             print(f"{dt.datetime.now():%I:%M %p}  ▶ {song.label()}  [{TIERS[song.energy]}]")
@@ -522,7 +523,7 @@ function playAudio(url, rate){ return new Promise(res=>{ const a=new Audio(url);
 async function talk(list, p){
   if(!list || !list.length) return;
   if(p) await ramp(p, 100, DUCK, 1);
-  for(const a of list){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url, 1.08); }
+  for(const a of list){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url); }
   $('voice').textContent=''; if(p) ramp(p, DUCK, 100, 1.5);
 }
 function onYouTubeIframeAPIReady(){
@@ -547,7 +548,7 @@ async function next(err){
     const fades = [ramp(p, 0, target, err||!old ? 1.5 : FADE)];
     if(old) fades.push(ramp(old, 100, 0, FADE).then(()=>old.stopVideo()));
     await Promise.all(fades);
-    if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url,1.08);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
+    if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
   } catch(e){ console.log(e); } finally { busy=false; }
 }
 setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix

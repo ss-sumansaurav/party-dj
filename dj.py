@@ -270,6 +270,7 @@ def main(argv=None) -> int:
     from partydj import announcer
 
     announcer.DJ_VOICE = cfg.dj_voice
+    announcer.SAY_AS.update(cfg.name_pronunciations)
     if args.check_config:
         return cmd_check_config(cfg)
     if args.check_auth:

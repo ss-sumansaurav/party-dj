@@ -54,6 +54,7 @@ If `python dj.py --check-auth` starts failing, repeat steps 1 to 6. Re-check the
 | `song_play_seconds` | How long each song plays before the DJ mixes into the next (default 165; the birthday song plays in full) |
 | `crossfade_seconds` | Length of the smooth blend between songs (default 6) |
 | `dj_voice` | The DJ's voice (a young male neural voice by default; needs internet when announcements are made) |
+| `name_pronunciations` | How the voice should say names (e.g. `Ketan: Kaytun`) |
 | `blocked_artists`, `blocked_tracks`, `requested_tracks` | Edit any time, before or during the party |
 
 ## Songs (`songs.yaml`)
@@ -103,7 +104,9 @@ python dj.py
 4. **DJ mixing:** each song plays for about 2¾ minutes (`song_play_seconds`), skipping a few
    seconds of long intros, then blends into the next song over `crossfade_seconds`.
 5. **Announcements** every few songs, spoken over the start of a song with the music turned
-   down, in an upbeat Indian English voice so Ketan's and Poonam's names sound right.
+   down, in a young American DJ voice. Its speed, pitch and loudness follow the energy: calm
+   and smooth for slow songs, building up and punchy for the big ones. If a name sounds off,
+   change its spelling under `name_pronunciations` in `config.yaml`.
 6. **Pick the vibe:** Auto follows the plan for the time of night. Chill, Groove, Dance,
    Bangers or On fire switch the music to that energy from the next song, until you pick
    Auto again.

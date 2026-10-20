@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,63 +11,68 @@ MAX_WORDS = 32  # about 15 seconds of speech
 
 LINES = {
     "opening": [
-        "Yo yo yo, what's up Mumbai! Welcome to {name}'s birthday bash, and no cap, {host} absolutely understood the assignment. Main character energy only tonight. Let's gooo!",
+        "Yo Mumbai, what's good! Welcome to {name}'s birthday party. I'm your DJ tonight, and {host} said no holding back. So let's get this party started!",
     ],
     "Warm-up": [
-        "Okay okay, the vibes are already immaculate, fr fr. Up next, a total classic, {next}. Sing it, besties!",
-        "Lowkey this one is pure nostalgia, highkey a banger. It's {next}, let's vibe!",
-        "Sheesh, this crowd's got aura! Turn it up for {next}!",
-        "It's giving retro, it's giving iconic. Here comes {next}!",
+        "Alright alright, we're easing into it. Got a real classic for you. Sing it loud, this is {next}!",
+        "Feeling that throwback? Yeah, me too. Here's a timeless one, {next}!",
+        "Smooth start, good people, great vibes. Keep it rolling with {next}!",
+        "Old school, gold school. Turn it up, this is {next}!",
     ],
     "Build": [
-        "Okayyy, the dance floor is heating up and I'm here for it! Let's go, {next}!",
-        "Eighties and nineties are back and honestly? Goated. It's {next}, no skips!",
-        "{host}, get the squad on the floor, it's literally {next}. We move!",
-        "Vibe check: passed! Keep that energy, here comes {next}!",
+        "Ooh, I see you moving! The floor is warming up. Let's keep it going, {next}!",
+        "Now we're talking! Eighties, nineties, all the hits. Get up, it's {next}!",
+        "{host}, get your crew on the floor. This one's {next}. Let's go!",
+        "The energy's building and I love it! Here comes {next}!",
     ],
     "Peak": [
-        "Bro, this is where it gets unreal! Hands up for {next}!",
-        "No cap, this one slaps so hard. Full volume, it's {next}!",
-        "{name}, this one's for you, birthday legend! Absolute W incoming, {next}!",
-        "The dhol is about to drop and it's gonna be bussin! Balle balle, {next}!",
+        "Okay, this is it! Hands up, all the way up! It's {next}!",
+        "Turn it up! Louder! This one goes hard. Let's go, {next}!",
+        "{name}, this one's for you, birthday legend! Everybody, {next}!",
+        "Dhol's coming in, you know what time it is! Balle balle, {next}!",
     ],
     "Peak 2": [
-        "You thought we were done? Not a chance, bestie! It's {next}!",
-        "This party is straight up legendary. Keep it going, {next}!",
-        "We are so back! Everyone on the floor for {next}!",
-        "The energy is unmatched, fr fr. Let's go, {next}!",
+        "You thought we were done? Not even close! Let's go, {next}!",
+        "This party is on another level. Don't stop now, it's {next}!",
+        "Let me hear you, Mumbai! Everybody on the floor for {next}!",
+        "No slowing down tonight! Bring it back, {next}!",
     ],
     "Wind-down": [
-        "Okay, slowing it down, but the vibes stay elite. Here's {next}.",
-        "Grab your favourite person, it's a soft-launch moment. Here's {next}.",
-        "Big feels incoming, no cap. Sing along, it's {next}.",
+        "Alright, let's slow it down. Grab someone special. This is {next}.",
+        "Take a breath, sing along with me. Here's {next}.",
+        "Easy now, feel this one. It's {next}.",
     ],
     "vibe_up": [
-        "Hold up, the vibe's a little sleepy. We don't do that here! Wake up, it's {next}!",
-        "Okay squad, I need more energy, like right now! Here comes {next}, let's goooo!",
+        "Hold up, hold up. I need more energy than that! Wake up, Mumbai, it's {next}!",
+        "Come on, I know you've got more! Let's turn it up, it's {next}!",
     ],
     "request": [
-        "Ayo, we got a request and it's a certified banger! This one's {next}, let's gooo!",
-        "Request unlocked! Somebody here has elite taste. It's {next}!",
+        "We got a request coming in, and it's a good one! This is {next}!",
+        "Somebody's got great taste! By request, here's {next}!",
     ],
     "hype": [
-        "Make some noise for {name}! Louder! This party is absolutely bussin!",
-        "Everybody hands up, this is the moment! {host}, you ate with this party, no crumbs!",
-        "Is this the best party in Mumbai tonight? No cap, it is! Let's gooo!",
+        "Make some noise for {name}! Louder! Let me hear you!",
+        "Everybody, hands up! Give it up for {host}, what a party!",
+        "Mumbai, are you with me? Let me hear you scream!",
     ],
     "birthday_intro": [
-        "Okay everybody, attention please! Lights down, cake out. It's {name}'s main character moment, so make some noise!",
+        "Alright everybody, can I get your attention? Lights down, cake out. It's {name}'s moment. Make some noise!",
     ],
     "cake": [
         "Three, two, one! Cut that cake, {name}! Everybody together, happy birthday!",
     ],
     "shoutout": [
-        "Happy birthday {name}, you absolute legend! Another year of pure W energy. Huge shoutout to {host}, this party ate and left no crumbs!",
+        "Happy birthday {name}, you legend! Here's to an amazing year. And a huge shoutout to {host} for this incredible party!",
     ],
     "closing": [
-        "Mumbai, you were iconic tonight, no cap! Happy birthday again, {name}, and {host}, this party was goated. Peace out, love you all!",
+        "Mumbai, you were amazing tonight! Happy birthday once again, {name}. {host}, thank you for this party. Good night, everybody!",
     ],
 }
+
+# How hyped each kind of line sounds (1 calm .. 5 full hype). Song lines use the song's energy.
+KIND_ENERGY = {"opening": 4, "Warm-up": 3, "Build": 4, "Peak": 5, "Peak 2": 5, "Wind-down": 2,
+               "vibe_up": 5, "request": 4, "hype": 5, "birthday_intro": 4, "cake": 5,
+               "shoutout": 4, "closing": 3}
 
 
 class Writer:
@@ -89,30 +95,75 @@ class Writer:
         return text
 
 
-DJ_VOICE = "en-IN-PrabhatNeural"  # Indian English male voice, so Ketan and Poonam sound right; config.yaml dj_voice
+DJ_VOICE = "en-US-AndrewNeural"  # young American male voice; change in config.yaml (dj_voice)
+SAY_AS = {"Ketan": "Kaytun", "Poonam": "Poonum"}  # spelled the way the voice should say them
 _warned = False
 
+# Voice settings per energy level: speed, pitch, loudness.
+PROSODY = {1: (-2, -3, 0), 2: (2, 0, 5), 3: (8, 3, 10), 4: (12, 6, 20), 5: (16, 10, 30)}
 
-def _edge_tts(text: str, out: Path, voice: str):
+
+def sentences(text: str) -> list[str]:
+    return [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p]
+
+
+def prosody(sentence: str, i: int, n: int, energy: int) -> tuple[str, str, str]:
+    """Modulate each sentence like a DJ: hyped lines climb towards the drop,
+    calm lines settle, and exclamations get extra punch."""
+    rate, pitch, vol = PROSODY[max(1, min(5, energy))]
+    if energy >= 3:
+        pitch += 2 * i            # build up through the line
+        if i == n - 1 and n > 1:  # the drop: the song name, loud and quick
+            rate += 4
+            pitch += 3
+            vol += 10
+    else:
+        pitch -= i                # soft, settling delivery
+    if sentence.endswith("!"):
+        pitch += 3
+        vol += 5
+    elif sentence.endswith("?"):
+        pitch += 2
+    return f"{rate:+d}%", f"{min(pitch, 14):+d}Hz", f"{min(vol, 50):+d}%"
+
+
+def for_voice(text: str, voice: str) -> str:
+    """Respell Indian names for non-Indian voices so they're said right."""
+    if voice.startswith(("en-IN", "hi-IN")):
+        return text
+    for name, said in SAY_AS.items():
+        text = re.sub(rf"\b{re.escape(name)}\b", said, text)
+    return text
+
+
+def _edge_tts(text: str, out: Path, voice: str, energy: int):
     import asyncio
 
     import edge_tts
 
+    parts = sentences(for_voice(text, voice))
+
     async def go():
-        await edge_tts.Communicate(text, voice, rate="+12%", pitch="+8Hz", volume="+20%").save(str(out))
+        audio = bytearray()
+        for i, part in enumerate(parts):
+            rate, pitch, volume = prosody(part, i, len(parts), energy)
+            async for chunk in edge_tts.Communicate(part, voice, rate=rate, pitch=pitch, volume=volume).stream():
+                if chunk["type"] == "audio":
+                    audio += chunk["data"]
+        out.write_bytes(bytes(audio))
 
     asyncio.run(go())
     if not out.exists() or out.stat().st_size < 1000:
         raise RuntimeError("edge-tts returned no audio")
 
 
-def speak_to_file(text: str, path: Path, voice: str | None = None) -> Path:
-    """Write speech audio with an upbeat Indian English male neural voice (edge-tts).
-    Falls back to gTTS, then to the Mac's `say`."""
+def speak_to_file(text: str, path: Path, voice: str | None = None, energy: int = 3) -> Path:
+    """Write speech audio in a young American DJ voice (edge-tts), with the delivery
+    modulated to the energy (1 calm .. 5 full hype). Falls back to gTTS, then the Mac's `say`."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         out = path.with_suffix(".mp3")
-        _edge_tts(text, out, voice or DJ_VOICE)
+        _edge_tts(text, out, voice or DJ_VOICE, energy)
         return out
     except Exception as e:
         global _warned
@@ -124,13 +175,13 @@ def speak_to_file(text: str, path: Path, voice: str | None = None) -> Path:
         from gtts import gTTS
 
         out = path.with_suffix(".mp3")
-        gTTS(text, lang="en", tld="co.in").save(str(out))
+        gTTS(for_voice(text, ""), lang="en", tld="com").save(str(out))
         return out
     except Exception as gtts_error:
         if shutil.which("say"):
             out = path.with_suffix(".aiff")
-            voice = ["-v", "Rishi"] if _has_voice("Rishi") else (["-v", "Daniel"] if _has_voice("Daniel") else [])
-            subprocess.run(["say", *voice, "-r", "205", "-o", str(out), text], check=True)
+            voice = ["-v", "Alex"] if _has_voice("Alex") else []
+            subprocess.run(["say", *voice, "-r", "205", "-o", str(out), for_voice(text, "")], check=True)
             return out
         raise RuntimeError(f"Couldn't make speech audio: {gtts_error}") from gtts_error
 
@@ -143,7 +194,7 @@ def _has_voice(name: str) -> bool:
     return any(line.split()[0] == name for line in voices.splitlines() if line.strip())
 
 
-SPEED = "1.08"  # play speech a little faster for DJ energy
+SPEED = "1.0"  # the voice already speeds up with the energy
 
 
 def play(path: Path):
