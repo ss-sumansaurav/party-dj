@@ -88,6 +88,20 @@ It takes a few minutes, plus about half an hour if you listen to every song, and
 
 Run it again after changing `config.yaml` or `songs.yaml`; the same date gives the same plan.
 
+## Android phone app
+
+The same DJ also runs as an Android app (`android/`). GitHub builds it on every push to
+`main` (Actions > "Android app" > the `party-dj-apk` download). Install `party-dj.apk` on the
+phone (allow "install unknown apps" when asked), open **Ketan's Party DJ**, wait while it finds
+the songs, then tap **▶ START THE PARTY**. Connect the phone to the speaker by Bluetooth or cable.
+
+- Everything on the DJ page works: vibe buttons, requests with 🎙 Speak, Stop, Up next,
+  blocks, the songs page and the crowd camera. Announcements need the internet.
+- The app finds songs without signing in. It doesn't create or change the YouTube Music
+  playlist; make that from the Mac with `python dj.py --test`.
+- Keep the app open with the phone on charge. The screen stays on by itself; leaving the
+  app pauses the music. The back button asks before ending the party.
+
 ## Songs page: see, add or remove songs
 
 ```bash
