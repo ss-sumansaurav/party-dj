@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+MIN_ENERGY = 2  # songs below this energy aren't played
 DEFAULT_SECONDS = 270  # used until YouTube Music tells us the real length
 
 # Titles containing these words are skipped when no explicit flag is available.
@@ -119,5 +120,6 @@ def load_pool(path: str | Path, cfg) -> tuple[list[Song], Song]:
         if s.key != birthday.key
         and not is_blocked(s, cfg.blocked_artists, cfg.blocked_tracks)
         and not title_looks_explicit(s.title)
+        and (s.energy >= MIN_ENERGY or s.requested)  # 1-dot songs are too slow for this party
     ]
     return usable, birthday

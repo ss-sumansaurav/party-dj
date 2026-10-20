@@ -64,6 +64,9 @@ The pool the DJ picks from: title, artist, language (`hi`, `pa`, `en`), era and 
 score from 1 (mellow) to 5 (floor-filler). Add or remove lines freely. The planner never
 repeats a song, keeps English at or under the configured share, skips anything YouTube Music
 flags as explicit (or whose title looks explicit), and drops blocked artists and tracks.
+Songs with energy 1 (one dot) are kept on the list but never played, unless someone requests
+one. The last block of songs is party bangers in the style Bollywood club DJs like DJ Akhil
+Talreja and DJ Suketu are known for.
 
 ## Test mode (run this before the party)
 
@@ -138,6 +141,13 @@ python dj.py
 4. **DJ mixing:** each song plays for 90 to 150 seconds. The DJ picks the mix point at a pause
    in the singing (from YouTube Music's timed lyrics), skipping a few
    seconds of long intros, then blends into the next song over `crossfade_seconds`.
+   Now and then it mixes like a club DJ instead: when the energy climbs, a trance-style
+   build-up (a rising sweep over the old song, then a deep boom as the new one drops in);
+   between two bangers, a quick vinyl scratch and a cut. The effects are made by the program
+   itself (no recorded sounds) and play at the DJ voice volume. YouTube's player can't be
+   filtered, chopped or looped from a web page, so the Armin van Buuren and Fred again..
+   touches come through build-ups, drops, scratches and sing-along moments rather than
+   remixing the songs themselves.
 5. **Announcements** every few songs, spoken over the start of a song with the music turned
    down, in a young American DJ voice. Its speed, pitch and loudness follow the energy: calm
    and smooth for slow songs, building up and punchy for the big ones. If a name sounds off,
@@ -178,12 +188,17 @@ python dj.py
     requested song (or the birthday song) is playing: then it plays right after. Every request
     is added to the YouTube Music playlist, with who asked for it in the playlist's
     description, and saved in `requests.csv`.
-12. **🎚 Sound:** sliders for the music volume, the DJ voice volume, and how far the music dips
+11. **🎚 Sound** (under the request queue): sliders for the music volume, the DJ voice volume, and how far the music dips
     under the voice. Bass and treble can't be changed from the page (YouTube's player doesn't
     allow it): use the speaker's own controls.
 13. **Dance-floor call-out:** when the crowd camera (or your vibe scores) says people aren't
     dancing, the DJ calls everyone to the dance floor before the next song, at most once
     every 20 minutes.
+14. **Sing-along:** when the vibe score is 5 (On fire, from you or the camera), the DJ waits for
+    the song's hook (the line that repeats most in the timed lyrics), shouts "Everybody sing!",
+    drops the music right down for about 8 seconds so the room sings it, then brings it back.
+    The hook's words show on the DJ page. If the current song is nearly over it happens on the
+    next one; at most once every 15 minutes.
 
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the

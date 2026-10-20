@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 from . import resolver
-from .songs import Song, _song, norm, title_looks_explicit
+from .songs import MIN_ENERGY, Song, _song, norm, title_looks_explicit
 
 LANGS = {"hi": "Hindi", "pa": "Punjabi", "en": "English"}
 _lock = threading.Lock()
@@ -33,7 +33,8 @@ class Songbook:
         out = []
         for i, s in enumerate(self.rows(), 1):
             out.append({"n": i, "title": s.title, "artist": s.artist, "lang": LANGS.get(s.lang, s.lang),
-                        "energy": s.energy, "era": s.era, "state": state.get(s.key, "")})
+                        "energy": s.energy, "era": s.era,
+                        "state": "Not played: too slow (1 dot)" if s.energy < MIN_ENERGY else state.get(s.key, "")})
         return {"songs": out, "live": bool(d)}
 
     def add(self, title: str, artist: str, lang: str, energy: int) -> str:

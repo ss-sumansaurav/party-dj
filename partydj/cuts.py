@@ -29,16 +29,22 @@ def _load() -> dict[str, list]:
 
 def lyric_lines(yt, video_id: str) -> list[tuple[float, float]]:
     """(start, end) seconds of each sung line, or [] when the song has no timed lyrics."""
+    return [(a, b) for a, b, _ in lyric_text(yt, video_id)]
+
+
+def lyric_text(yt, video_id: str) -> list[tuple[float, float, str]]:
+    """(start, end, words) of each sung line. Older cache entries have no words ("")."""
     with _lock:
         cache = _load()
         if video_id in cache:
-            return [tuple(x) for x in cache[video_id]]
-    lines: list[tuple[float, float]] = []
+            return [(x[0], x[1], x[2] if len(x) > 2 else "") for x in cache[video_id]]
+    lines: list[tuple[float, float, str]] = []
     try:
         browse = yt.get_watch_playlist(videoId=video_id, limit=1).get("lyrics")
         lyr = yt.get_lyrics(browse, timestamps=True) if browse else None
         if lyr and lyr.get("hasTimestamps"):
-            lines = [(l.start_time / 1000, l.end_time / 1000) for l in lyr["lyrics"] if l.text.strip()]
+            lines = [(l.start_time / 1000, l.end_time / 1000, l.text.strip())
+                     for l in lyr["lyrics"] if l.text.strip()]
     except Exception:
         return []  # not cached, so it's tried again next time
     with _lock:
@@ -47,6 +53,24 @@ def lyric_lines(yt, video_id: str) -> list[tuple[float, float]]:
         CACHE.parent.mkdir(exist_ok=True)
         CACHE.write_text(json.dumps(cache))
     return lines
+
+
+def chorus(lines: list[tuple[float, float, str]]) -> tuple[list[float], str]:
+    """When the hook comes round: start times of the most repeated sung line, and its words.
+    That's the line a crowd knows, so it's where the DJ drops the music for a sing-along."""
+    count: dict[str, list[float]] = {}
+    words: dict[str, str] = {}
+    for start, _, text in lines:
+        key = "".join(c for c in text.lower() if c.isalnum())
+        if len(key) >= 6:
+            count.setdefault(key, []).append(start)
+            words.setdefault(key, text)
+    if not count:
+        return [], ""
+    key = max(count, key=lambda k: (len(count[k]), -count[k][0]))
+    if len(count[key]) < 2:
+        return [], ""
+    return count[key], words[key]
 
 
 def best_play(song_seconds: int, start: int, lines: list[tuple[float, float]],

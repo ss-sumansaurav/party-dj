@@ -60,6 +60,11 @@ LINES = {
         "Dance floor's looking lonely! Grab a friend and get up here. This is {next}!",
         "No more standing around! Everybody to the dance floor, right now. It's {next}!",
     ],
+    "sing_along": [
+        "Mumbai, this one's yours! Everybody sing!",
+        "I can't hear you! Sing it with me, everybody!",
+        "Hands up and sing it loud! Let me hear you!",
+    ],
     "hype": [
         "Make some noise for {name}! Louder! Let me hear you!",
         "Everybody, hands up! Give it up for {host}, what a party!",
@@ -82,7 +87,7 @@ LINES = {
 # How hyped each kind of line sounds (1 calm .. 5 full hype). Song lines use the song's energy.
 KIND_ENERGY = {"opening": 4, "Warm-up": 3, "Build": 4, "Peak": 5, "Peak 2": 5, "Wind-down": 2,
                "vibe_up": 5, "request": 4, "hype": 5, "birthday_intro": 4, "cake": 5,
-               "shoutout": 4, "closing": 3, "guest_request": 4, "dance_floor": 5}
+               "shoutout": 4, "closing": 3, "guest_request": 4, "dance_floor": 5, "sing_along": 5}
 
 
 # Hindi and Hinglish lines, spoken by the Hindi voice. English words stay in English letters.
@@ -123,6 +128,10 @@ LINES_HI = {
     "dance_floor": [
         "अरे, सब बैठे क्यों हो? चलो dance floor पे! ये है {next}!",
         "Dance floor खाली क्यों है? सब लोग आ जाओ! चलो, {next}!",
+    ],
+    "sing_along": [
+        "सब मिलकर गाओ! ज़ोर से!",
+        "Mumbai, आवाज़ ऊँची करो, सब साथ में गाओ!",
     ],
     "hype": [
         "{name} के लिए ज़ोरदार तालियाँ! और ज़ोर से!",

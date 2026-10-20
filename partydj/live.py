@@ -12,6 +12,7 @@ import html
 import datetime as dt
 import http.server
 import json
+import random
 import re
 import socket
 import threading
@@ -20,7 +21,7 @@ import urllib.parse
 import webbrowser
 from pathlib import Path
 
-from . import announcer, cuts
+from . import announcer, cuts, fx
 from .config import load_config
 from .planner import PHASE_RULES, Slot
 from .songbook import Songbook
@@ -33,7 +34,8 @@ PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
 GUEST_PORT = 8766          # request page only, for the public link
 PUBLIC = {"url": None}     # the public link, once it's open
-DANCE_CALL_GAP = 20 * 60   # seconds between "come to the dance floor" call-outs
+DANCE_CALL_GAP = 20 * 60
+SINGALONG_GAP = 15 * 60       # at most one sing-along drop every 15 minutes   # seconds between "come to the dance floor" call-outs
 TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2"}
 
 
@@ -137,6 +139,12 @@ class Director:
         self.guest_reqs: dict[str, dict] = {}   # song key -> song, names, ips, first asked
         self.last_dance_call = 0.0
         self.dance_call_pending = False
+        self.singalong: dict | None = None  # a sing-along drop offered to the DJ page
+        self.singalong_pending = False      # on fire, but the drop moves to the next song
+        self.last_singalong = -SINGALONG_GAP
+        self.n_sing = 0
+        self.fx: list[str] = []             # scratch sounds made at start-up
+        self.rng = random.Random(f"{cfg.party_date}-fx")
         self.next_vibe: dt.datetime | None = None
         self.since_announce = 0
         self.closing_done = False
@@ -171,6 +179,10 @@ class Director:
                 if s.video_id:
                     cuts.lyric_lines(self.yt, s.video_id)
         threading.Thread(target=warm, daemon=True).start()
+        try:
+            self.fx = fx.make_all(AUDIO_DIR)
+        except Exception as e:  # the party still works, just without the effects
+            print(f"  (couldn't make the DJ effects: {e})")
         print("Making announcements...")
         w = self.writer
         for kind in ("opening", "birthday_intro", "cake", "shoutout", "closing"):
@@ -273,7 +285,7 @@ class Director:
                 return {"done": True}
 
             self.played.add(song.key)
-            self.current = song
+            prev, self.current = self.current, song
             self.current_reason = reason
             # What the DJ says over the intro.
             if not self.opened:
@@ -309,6 +321,10 @@ class Director:
                     announce += [a] if a else []
                     self.since_announce = 0
             print(f"{dt.datetime.now():%I:%M %p}  ▶ {song.label()}  [{TIERS[song.energy]}]")
+            sing = None
+            if self.singalong_pending and not song.full:
+                self.singalong_pending = False
+                sing = self.make_singalong(song)
             start = start_offset(song)
             play = cuts.best_play(song.full_length, start, cuts.lyric_lines(self.yt, song.video_id),
                                   self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds,
@@ -317,7 +333,39 @@ class Director:
                 "vid": song.video_id, "title": song.title, "artist": song.lead_artist,
                 "tier": TIERS[song.energy], "start": start, "play": play,
                 "full": song.full, "announce": announce, "req": reason in ("guest", "request"),
+                "fx": self.pick_fx(prev, song, reason), "sing": sing,
             }
+
+    def pick_fx(self, prev: Song | None, song: Song, reason: str | None) -> str:
+        """How to mix into the next song. Mostly a smooth blend; now and then a trance-style
+        build-up and drop when the energy climbs, or a quick scratch between two bangers."""
+        if not self.fx or prev is None or prev.full or song.full or reason == "birthday":
+            return ""
+        r = self.rng.random()
+        if song.energy > prev.energy and song.energy >= 4 and r < 0.45:
+            return "riser"
+        if min(song.energy, prev.energy) >= 4 and r < 0.3:
+            return "scratch:" + self.rng.choice(self.fx)
+        return ""
+
+    def make_singalong(self, song: Song) -> dict:
+        """The music drops away on the hook and the crowd sings it. The page picks the moment:
+        the next time the chorus comes round, or a few seconds from now without lyrics."""
+        self.n_sing += 1
+        at, words = cuts.chorus(cuts.lyric_text(self.yt, song.video_id))
+        return {"id": self.n_sing, "vid": song.video_id, "at": at, "words": words,
+                "announce": self.speak("sing_along", self.writer.line("sing_along", song.title))}
+
+    def singalong_done(self, sing_id: str, ok: bool):
+        with self.lock:
+            live = bool(self.singalong and str(self.singalong["id"]) == sing_id)
+            if live:
+                self.singalong = None
+            if ok:
+                self.last_singalong = time.monotonic()
+                self.notice("🎤 Sing-along! The crowd took the hook.")
+            elif live:
+                self.singalong_pending = True  # too late in this song, so it goes on the next one
 
     # ---------- the songs page ----------
     def song_states(self) -> dict[str, str]:
@@ -388,6 +436,11 @@ class Director:
             elif choice == "hold" and cur:
                 self.one_shot_tier = cur.energy
                 self.notice("Crowd's on fire 🔥 Holding the energy.")
+            fire = score >= 5 and cur is not None and not cur.full and self.singalong is None \
+                and not self.singalong_pending and time.monotonic() - self.last_singalong > SINGALONG_GAP
+            if fire:
+                self.singalong = self.make_singalong(cur)
+                self.last_singalong = time.monotonic()  # no second drop while this one is on
         log_mood(score, cur.label() if cur else "", decision)
 
     def dance_call_ok(self) -> bool:
@@ -615,6 +668,7 @@ class Director:
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
                 "up_next": self.up_next(), "queue": self.queue_view(), "guest_url": guest_url(),
+                "singalong": self.singalong,
             }
 
 
@@ -691,6 +745,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 director.set_mode(arg)
             elif u.path == "/score" and arg.isdigit() and 1 <= int(arg) <= 5:
                 director.add_score(int(arg), "camera" if q.get("src") == ["cam"] else "host")
+            elif u.path == "/singalong":
+                director.singalong_done(arg, q.get("ok") == ["1"])
             elif u.path == "/putback":
                 director.putback(arg)
             elif u.path == "/cam":
@@ -799,6 +855,9 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #players{position:relative;width:320px;height:180px;margin:12px auto 0;border-radius:10px;overflow:hidden;background:#000}
  #players iframe{position:absolute;left:0;top:0;width:320px;height:180px;pointer-events:none}
  #voice{color:var(--pink);min-height:22px;margin-top:8px}
+ #sing{display:none;font-size:30px;font-weight:800;color:#ffd54f;margin:10px 0;animation:pulse .6s infinite alternate}
+ #sing div{font-size:22px;color:var(--txt);font-weight:600}
+ @keyframes pulse{to{transform:scale(1.06)}}
  .snd{display:block;margin-top:10px;color:var(--dim);font-size:14px} .snd span{float:right;color:var(--txt)}
  .snd input{width:100%;padding:0;accent-color:var(--pink)}
 </style></head><body><main>
@@ -813,7 +872,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="players"><div id="p0"></div><div id="p1"></div></div>
 <div id="ui" hidden><div id="left">
  <div class="card"><div id="phase" style="color:var(--dim)"></div>
-  <div id="title">…</div><div id="artist"></div><div id="voice"></div><div id="bar"><div id="fill"></div></div></div>
+  <div id="title">…</div><div id="artist"></div><div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div></div>
  <div class="card" id="camcard"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:center">
   <div style="flex:1;min-width:240px"><div style="font-size:22px;font-weight:700">📷 Crowd camera</div>
    <div id="camlabel" style="font-size:26px;font-weight:700;margin:10px 0;color:var(--pink)">Off</div>
@@ -841,16 +900,17 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="card"><b>For you</b><div id="scores" style="color:var(--dim)"></div><ul id="notices"></ul></div>
 </div>
 <div id="side"><div class="card"><b>⏭ Up next</b><div id="nxtitle">…</div><div id="nxartist"></div></div>
+ <div class="card"><b>📱 Guests: scan to request a song</b>
+  <div id="qr" style="background:#fff;padding:10px;border-radius:12px;width:fit-content;margin:10px auto"></div>
+  <div id="qrurl" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
+  <div style="color:var(--dim);font-size:12px;margin-top:4px">Guests need to be on the same Wi-Fi.</div></div>
+ <div class="card"><b>🙋 Request queue</b><div style="color:var(--dim);font-size:12px">Most asked-for first, then whoever asked first</div><ol id="queue" style="text-align:left;padding-left:22px;margin:8px 0"></ol></div>
  <div class="card" style="text-align:left"><b>🎚 Sound</b>
   <label class="snd">Music volume <span id="vmusic"></span><input type="range" id="smusic" min="0" max="100"></label>
   <label class="snd">DJ voice volume <span id="vvoice"></span><input type="range" id="svoice" min="0" max="100"></label>
   <label class="snd">Music under the DJ voice <span id="vduck"></span><input type="range" id="sduck" min="5" max="60"></label>
   <div style="color:var(--dim);font-size:12px;margin-top:6px">Bass and treble: YouTube's player doesn't let web pages change them, so set those on the speaker (or its app).</div></div>
- <div class="card"><b>📱 Guests: scan to request a song</b>
-  <div id="qr" style="background:#fff;padding:10px;border-radius:12px;width:fit-content;margin:10px auto"></div>
-  <div id="qrurl" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
-  <div style="color:var(--dim);font-size:12px;margin-top:4px">Guests need to be on the same Wi-Fi.</div></div>
- <div class="card"><b>🙋 Request queue</b><div style="color:var(--dim);font-size:12px">Most asked-for first, then whoever asked first</div><ol id="queue" style="text-align:left;padding-left:22px;margin:8px 0"></ol></div></div>
+</div>
 </div>
 <div id="overlay"><h2>📊 Vibe check! How's the crowd?</h2><div class="row">
  <button class="mode" style="background:#3949ab" onclick="score(1)">1<br><small>chill</small></button>
@@ -873,6 +933,7 @@ async function post(path){ const r = await fetch(path,{method:'POST'}); if(!r.ok
 function ramp(p, from, to, secs){ return new Promise(res=>{ const steps=Math.max(1,Math.round(secs*10)); let i=0;
   p.setVolume(from); const t=setInterval(()=>{ i++; p.setVolume(from+(to-from)*i/steps); if(i>=steps){clearInterval(t); res();} },100); }); }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function fxAudio(name){ const a=new Audio('/audio/'+name); a.volume=SOUND.voice/100; a.play().catch(()=>{}); return a; }
 function playAudio(url, rate){ return new Promise(res=>{ const a=new Audio(url); a.volume=SOUND.voice/100; a.playbackRate=rate||1; a.onended=res; a.onerror=res; a.play().catch(res); }); }
 async function talk(list, p){
   if(!list || !list.length) return;
@@ -900,9 +961,20 @@ async function next(err){
     $('title').textContent=t.title; $('artist').textContent=t.artist+'  ·  '+t.tier; $('fill').style.width='0';
     load();
     const target = (t.announce && t.announce.length) ? DUCK : 100;
-    const fades = [ramp(p, 0, target, err||!old ? 1.5 : FADE)];
-    if(old) fades.push(ramp(old, old._v ?? 100, 0, FADE).then(()=>old.stopVideo()));
-    await Promise.all(fades);
+    const fxk = (!err && old && t.fx) ? t.fx : '';
+    if(fxk === 'riser'){            // trance-style build-up over the old song, then the drop
+      $('voice').textContent = '🚀 Build-up…'; fxAudio('fx_riser.wav');
+      await ramp(old, old._v ?? 100, 55, 4);
+      fxAudio('fx_impact.wav'); $('voice').textContent = '';
+      await Promise.all([ramp(p, 0, target, 0.3), ramp(old, old._v ?? 55, 0, 0.8).then(()=>old.stopVideo())]);
+    } else if(fxk.startsWith('scratch:')){   // scratch out of the old song, cut into the new one
+      fxAudio(fxk.slice(8)); await ramp(old, old._v ?? 100, 0, 0.7); old.stopVideo();
+      await ramp(p, 0, target, 1);
+    } else {
+      const fades = [ramp(p, 0, target, err||!old ? 1.5 : FADE)];
+      if(old) fades.push(ramp(old, old._v ?? 100, 0, FADE).then(()=>old.stopVideo()));
+      await Promise.all(fades);
+    }
     if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
   } catch(e){ console.log(e); } finally { busy=false; }
 }
@@ -910,10 +982,39 @@ setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
   if(!cur || busy || stopped) return; const p=P[active]; if(!p || !p.getCurrentTime) return;
   const t=p.getCurrentTime(), d=p.getDuration()||0, end=Math.min(cur.until, d ? d-0.5 : cur.until), left=end-t;
   if(d) $('fill').style.width=Math.min(100,100*(t-cur.start)/Math.max(1,end-cur.start))+'%';
+  if(singing) return;
+  const sg = cur.sing;   // a sing-along drop is waiting: find the hook, then drop the music
+  if(sg && t >= cur.start){
+    if(sg.when === undefined){
+      const fit = (sg.at||[]).find(x => x >= t+6 && x <= end-22);
+      sg.when = fit !== undefined ? fit : (!(sg.at||[]).length && end-t > 32 ? t+6 : null);
+      if(sg.when === null){ cur.sing = null; post('/singalong?v='+sg.id+'&ok=0'); }
+    } else if(t >= sg.when-4){ cur.sing = null; singAlong(sg, p); return; }
+  }
   if(pendingForce){ pendingForce = false; forceNow(); return; }
   if(left < PREP && !upcoming && !fetching) fetchNext(false);
   if(left < FADE && upcoming) next(false);
 }, 300);
+let singing = false, seenSing = 0;
+async function singAlong(sg, p){   // the crowd's on fire: music down, everybody sings the hook
+  singing = true;
+  try{
+    await ramp(p, p._v ?? 100, DUCK, 0.8);
+    if(sg.announce){ $('voice').textContent='🎤 '+sg.announce.text; await playAudio(sg.announce.url); $('voice').textContent=''; }
+    $('sing').innerHTML = '🎤 Everybody sing!' + (sg.words ? '<div>“'+esc(sg.words)+'”</div>' : ''); $('sing').style.display='block';
+    await ramp(p, DUCK, Math.min(DUCK, 12), 0.6);
+    await sleep(8000);
+    $('sing').style.display='none';
+    if(!stopped && p === P[active]) await ramp(p, p._v, 100, 1.5);
+    post('/singalong?v='+sg.id+'&ok=1');
+  } catch(e){ console.log(e); } finally { singing = false; }
+}
+function offerSing(o){   // the vibe hit 5: the drop goes on whichever song it was made for
+  if(!o || o.id === seenSing) return; seenSing = o.id;
+  if(cur && cur.vid === o.vid && !cur.sing) cur.sing = o;
+  else if(upcoming && upcoming.vid === o.vid && !upcoming.sing) upcoming.sing = o;
+  else post('/singalong?v='+o.id+'&ok=0');
+}
 async function load(){
   try{ const s = await (await fetch('/state')).json(); $('down').style.display='none';
     document.querySelectorAll('.mode[data-m]').forEach(b=>b.classList.toggle('on', String(s.mode)===b.dataset.m));
@@ -928,13 +1029,15 @@ async function load(){
     if(s.guest_url && s.guest_url !== shownQR){ shownQR = s.guest_url; $('qrurl').textContent = s.guest_url;
       $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
     if(s.force_next && cur) pendingForce = true;
+    offerSing(s.singalong);
   } catch(e){ $('down').style.display='block'; }
 }
 setInterval(load, 1000); load();
 // A request came in: mix into it now. A request already lined up goes first.
 async function forceNow(){
   if(busy || fetching){ pendingForce = true; return; }
-  if(upcoming && !upcoming.req){ post('/putback?v='+upcoming.vid); upcoming = null; }
+  if(upcoming && !upcoming.req){ post('/putback?v='+upcoming.vid);
+    if(upcoming.sing) post('/singalong?v='+upcoming.sing.id+'&ok=0'); upcoming = null; }
   next(false);
 }
 function applySound(){
