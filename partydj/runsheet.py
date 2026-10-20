@@ -79,7 +79,8 @@ def to_markdown(plan: SetPlan, cue_list: list[Cue], cfg, playlist_url: str | Non
         f"{cfg.start:%A %d %B %Y}, {_clock(cfg, 0)} to {_clock(cfg, cfg.duration_minutes * 60)}. "
         f"Host: {cfg.host_name}.",
         "",
-        f"- **{len(songs)} songs**, about {total // 60} minutes of music",
+        f"- **{len(songs)} songs** in the timed set (about {total // 60} minutes), plus "
+        f"{len(plan.reserve)} extra songs at the end of the playlist",
         f"- **Language:** {hindi} Hindi/Punjabi ({hindi / len(songs):.0%}), "
         f"{len(songs) - hindi} English ({(len(songs) - hindi) / len(songs):.0%})",
         f"- **Announcements:** {len(cue_list)} cues; vibe check every {cfg.vibe_check_minutes} min",
@@ -111,4 +112,12 @@ def to_markdown(plan: SetPlan, cue_list: list[Cue], cfg, playlist_url: str | Non
         lines.append(f"| {_clock(cfg, slot.start)} | {n} | {title}{req} | {s.artist} | {s.lang} | {'●' * s.energy} |")
     for c in by_slot.get(len(plan.slots), []):
         lines.append(f"| {_clock(cfg, c.at)} | 🎤 | *{c.text}* | | | |")
+    if plan.reserve:
+        lines += ["", f"## Extra songs ({len(plan.reserve)}, at the end of the playlist)", "",
+                  "For requests, an energy boost, or if the party runs past 2 AM. Liveliest first.", "",
+                  "| # | Track | Artist | Lang | Energy |", "| --- | --- | --- | --- | --- |"]
+        for s in plan.reserve:
+            n += 1
+            title = f"[{s.title}]({s.url})" if s.url else s.title
+            lines.append(f"| {n} | {title} | {s.artist} | {s.lang} | {'●' * s.energy} |")
     return "\n".join(lines) + "\n"

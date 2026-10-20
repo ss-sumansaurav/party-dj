@@ -124,7 +124,7 @@ def save_playlist(yt, cfg, plan) -> str | None:
     """Create (or refill) the private playlist, only after the host says yes."""
     from partydj.playlist import find_existing, fill_playlist
 
-    ids = [s.video_id for s in plan.songs if s.video_id]
+    ids = [s.video_id for s in plan.songs + plan.reserve if s.video_id]
     existing = find_existing(yt, cfg.playlist_title)
     if existing:
         print(f"A playlist called '{cfg.playlist_title}' already exists.")
@@ -171,19 +171,22 @@ def cmd_test(cfg, args) -> int:
         for path in samples:
             print(f"  Playing {path.name}")
             announcer.play(path)
-    minutes = len(plan.songs) * 33 // 60
-    if ask(f"Play 30 seconds of every song ({len(plan.songs)} songs, about {minutes} minutes)?"):
+    everything = plan.songs + plan.reserve
+    minutes = len(everything) * 33 // 60
+    if ask(f"Play 30 seconds of every song ({len(everything)} songs, about {minutes} minutes)?"):
         from partydj.preview import serve_previews
 
-        blocked = serve_previews(plan.songs)
+        blocked = serve_previews(everything)
 
     songs = plan.songs
     print("\n=== Report ===")
     print(f"Playlist:      {playlist_url or 'not created'}")
-    print(f"Run-sheet:     {OUT_RUNSHEET.resolve()}  ({len(songs)} songs)")
+    print(f"Run-sheet:     {OUT_RUNSHEET.resolve()}")
+    print(f"Songs:         {len(songs)} in the timed set + {len(plan.reserve)} extra at the end"
+          f" = {len(songs) + len(plan.reserve)} in the playlist")
     print(f"Announcements: {', '.join(str(p) for p in samples) or 'none'}")
     english = sum(s.is_english for s in songs)
-    print(f"Language mix:  {len(songs) - english} Hindi/Punjabi, {english} English")
+    print(f"Language mix:  {len(songs) - english} Hindi/Punjabi, {english} English (timed set)")
     if missing:
         print(f"Not found on YouTube Music ({len(missing)}), left out:")
         for s in missing:

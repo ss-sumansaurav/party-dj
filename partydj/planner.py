@@ -36,6 +36,7 @@ class SetPlan:
     phases: list[Phase]
     slots: list[Slot] = field(default_factory=list)
     birthday_index: int | None = None  # index into slots of the birthday song
+    reserve: list[Song] = field(default_factory=list)  # extra songs added after the timed set
 
     @property
     def songs(self) -> list[Song]:
@@ -134,6 +135,9 @@ def build_plan(pool: list[Song], birthday_song: Song, cfg) -> SetPlan:
         elif rule["ramp"] == "down":
             chosen.sort(key=lambda s: -s.energy)
         plan.slots += [Slot(s, ph.name) for s in chosen]
+    # Everything else in the pool goes on the end of the playlist, liveliest first,
+    # so it's there for requests, energy boosts or if the party runs late.
+    plan.reserve = sorted(unused(plan, playable), key=lambda s: -s.energy)
     return plan
 
 

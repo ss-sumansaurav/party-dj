@@ -3,59 +3,61 @@ from __future__ import annotations
 
 import random
 import shutil
+import struct
 import subprocess
+import wave
 from pathlib import Path
 
 MAX_WORDS = 32  # about 15 seconds of speech
 
 LINES = {
     "opening": [
-        "Good evening everyone, and welcome to {name}'s birthday party! {host} has set up a fantastic night, so let's kick things off with the classics!",
+        "Ladies and gentlemen, make some noise! Welcome to {name}'s birthday bash! {host} has cooked up one massive night, so let's go, let's go, let's go!",
     ],
     "Warm-up": [
-        "What a lovely crowd tonight! Keep singing along, because up next is {next}.",
-        "Old songs, new memories. Coming up, {next}. Everybody sing along!",
-        "Turn it up a little, friends, here comes {next}!",
-        "This one takes us straight back to college days. Next up, {next}!",
+        "Ohhh, I hear you singing out there! Louder, Mumbai! Up next, the legend, {next}!",
+        "Golden oldies, golden people! Everybody sing with me, here comes {next}!",
+        "Volume up, hands up, voices up! It's {next}!",
+        "Throwback time, baby! Take a trip down memory lane with {next}!",
     ],
     "Build": [
-        "The dance floor is warming up! Let's keep moving with {next}.",
-        "Feeling those eighties and nineties vibes? Next up, {next}. Dancing shoes on!",
-        "{host}, get everyone on the floor, because {next} is coming up!",
-        "Time to clap and move! Next up, {next}.",
+        "The floor is heating up! Are you ready? I said, are you ready? Here comes {next}!",
+        "Eighties and nineties in the house! Dancing shoes on, it's {next}!",
+        "{host}, grab everybody and hit that floor! {next}, let's go!",
+        "Clap your hands, move those feet! Disco fever is here with {next}!",
     ],
     "Peak": [
-        "Nobody stays seated now! Full power, it's {next}!",
-        "Hands up, Mumbai! Here comes {next}!",
-        "{name}, this one's for you! {next}, full volume!",
-        "Get ready, the dhol is about to drop! Next up, {next}.",
+        "Nobody sits down now! Full power, full volume, it's {next}!",
+        "Hands in the air, Mumbai! Make some noise for {next}!",
+        "{name}, this one is all for you! Turn it up, it's {next}!",
+        "Get ready, the dhol is about to drop! Balle balle, here comes {next}!",
     ],
     "Peak 2": [
-        "The party is far from over, friends! Next up, {next}!",
-        "Keep that energy going! Here comes {next}!",
-        "The night is still young! Full on, {next}!",
-        "Everybody on the dance floor! Next up, {next}.",
+        "Did you think we were done? No way! The party just got bigger with {next}!",
+        "Keep that fire burning! Jump with me, it's {next}!",
+        "The night is young and so are we! Full on, {next}!",
+        "Everybody on the dance floor, right now! Here comes {next}!",
     ],
     "Wind-down": [
-        "The night is slowing down, but the memories are just beginning. Here's {next}.",
-        "Nice and easy now, straight from the heart. Next up, {next}.",
-        "Grab your partner's hand, here comes {next}.",
+        "What a night, what a crowd! Slow it down and sway with me to {next}.",
+        "Grab someone you love, hold them close, here comes {next}.",
+        "From the heart, for all of you. Sing it together, it's {next}!",
     ],
     "vibe_up": [
-        "Looks like we need a little more energy! Turning it up with {next}!",
-        "Come on everyone, on your feet! Here comes {next}!",
+        "Oh, I think we need more energy! Get up, get up, get up! It's {next}!",
+        "Come on, Mumbai, I can't hear you! Let's go, here comes {next}!",
     ],
     "birthday_intro": [
-        "Attention please! Dim the lights and bring out the cake. This moment belongs to {name}!",
+        "Attention, attention! Lights down, cake out! It's the moment we've all been waiting for. Everybody, make some noise for {name}!",
     ],
     "cake": [
-        "Three, two, one! Cut the cake, {name}, and everyone together, happy birthday!",
+        "Three, two, one! Cut that cake, {name}! Everybody together, happy birthday!",
     ],
     "shoutout": [
-        "Happy birthday, {name}! Wishing you lots of joy and love. And thank you, {host}, for this wonderful party!",
+        "Happy birthday, {name}! You are a superstar! A huge round of applause, and big love to {host} for this amazing party!",
     ],
     "closing": [
-        "Friends, what a memorable night. Happy birthday once again, {name}, and thank you, {host}! Good night, Mumbai!",
+        "What a night, Mumbai! You were incredible! Happy birthday once again, {name}, and thank you, {host}! Good night, and party on!",
     ],
 }
 
@@ -93,7 +95,7 @@ def speak_to_file(text: str, path: Path) -> Path:
         if shutil.which("say"):
             out = path.with_suffix(".aiff")
             voice = ["-v", "Rishi"] if _has_voice("Rishi") else []
-            subprocess.run(["say", *voice, "-o", str(out), text], check=True)
+            subprocess.run(["say", *voice, "-r", "205", "-o", str(out), text], check=True)
             return out
         raise RuntimeError(f"Couldn't make speech audio: {gtts_error}") from gtts_error
 
@@ -106,9 +108,40 @@ def _has_voice(name: str) -> bool:
     return any(line.split()[0] == name for line in voices.splitlines() if line.strip())
 
 
-def play(path: Path):
-    """Play an audio file through the Mac's current output (the party speaker)."""
+SPEED = "1.12"  # play speech a little faster for DJ energy
+HORN = Path(__file__).with_name("horn.wav")
+
+
+def make_horn(path: Path = HORN) -> Path:
+    """Synthesise a short party air-horn sting (no recorded audio involved)."""
+    if path.exists():
+        return path
+    rate = 22050
+    frames = bytearray()
+    for start_hz, length in ((480, 0.16), (480, 0.16), (480, 0.55)):
+        n = int(rate * length)
+        for i in range(n):
+            t = i / rate
+            hz = start_hz * (1 - 0.04 * i / n)  # slight droop, like a real horn
+            # Buzzy chord: sawtooth waves a major third and a fifth apart
+            v = sum(((t * hz * k) % 1.0) * 2 - 1 for k in (1, 1.26, 1.5)) / 3
+            env = min(1.0, i / 300, (n - i) / 600)
+            frames += struct.pack("<h", int(v * env * 0.45 * 32767))
+        frames += bytes(2 * int(rate * 0.06))  # gap between blasts
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    return path
+
+
+def play(path: Path, horn: bool = True):
+    """Play an announcement through the Mac's current output (the party speaker),
+    with an air-horn sting first and slightly faster, punchier speech."""
     player = shutil.which("afplay")
     if not player:
         raise RuntimeError("afplay not found; announcements play on macOS only.")
-    subprocess.run([player, str(path)], check=False)
+    if horn:
+        subprocess.run([player, str(make_horn())], check=False)
+    subprocess.run([player, "-r", SPEED, "-q", "1", str(path)], check=False)
