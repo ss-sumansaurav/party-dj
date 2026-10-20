@@ -12,8 +12,12 @@ import argparse
 import datetime as dt
 import sys
 import time
+import warnings
 import webbrowser
 from pathlib import Path
+
+# The Mac's built-in Python uses LibreSSL; urllib3 warns about it but works fine.
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL")
 
 from partydj.config import ConfigError, load_config
 
@@ -41,6 +45,20 @@ def cmd_check_config(cfg) -> int:
     return 0
 
 
+def headers_from_curl(text: str) -> str:
+    """Turn Chrome's 'Copy as cURL' into 'name: value' header lines."""
+    import shlex
+
+    words = shlex.split(text.replace("\\\n", " "))
+    lines = []
+    for flag, value in zip(words, words[1:]):
+        if flag in ("-H", "--header"):
+            lines.append(value)
+        elif flag in ("-b", "--cookie"):
+            lines.append(f"cookie: {value}")
+    return "\n".join(lines)
+
+
 def cmd_sign_in() -> int:
     """Read copied request headers from the Mac clipboard and save them, without printing them."""
     import subprocess
@@ -54,8 +72,11 @@ def cmd_sign_in() -> int:
     except (OSError, subprocess.CalledProcessError):
         print("Couldn't read the clipboard (pbpaste). Run: ytmusicapi browser --file browser.json")
         return 1
+    if headers.lstrip().startswith("curl "):
+        headers = headers_from_curl(headers)
     if "cookie" not in headers.lower():
-        print("The clipboard doesn't hold request headers yet. Copy them from the browser and try again.")
+        print("The clipboard doesn't hold the right headers yet. In the browser's Network tab,\n"
+              "right-click a 'browse' request, choose Copy > Copy as cURL, and try again.")
         return 1
     if "sapisidhash" not in headers.lower():
         print("Those headers have no sign-in in them. Make sure you're signed in to YouTube Music,\n"

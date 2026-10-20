@@ -27,10 +27,9 @@ and the app sets it to be readable by you only. Treat it like a password.
 1. Open Chrome or Firefox, go to <https://music.youtube.com> and sign in.
 2. Open developer tools (Cmd+Option+I) and go to the **Network** tab.
 3. In YouTube Music, click **Library** (or scroll) so new requests appear.
-4. In the filter box type `browse` and click any row named `browse?...`.
-5. On the right, open **Headers** and scroll to **Request Headers**. Turn on the **Raw**
-   switch next to that title, click inside the text, press Cmd+A, then Cmd+C.
-   (Firefox: right-click the request, *Copy Value*, *Copy Request Headers*.)
+4. In the filter box type `browse`. Right-click any row named `browse?...` and choose
+   **Copy > Copy as cURL** (on a Mac it may say *Copy as cURL (bash)*).
+5. Nothing to paste: the next step reads it from your clipboard.
 6. In the Terminal, in the `party-dj` folder, run:
    ```bash
    python dj.py --sign-in
