@@ -143,6 +143,7 @@ class Director:
         self.singalong_pending = False      # on fire, but the drop moves to the next song
         self.last_singalong = -SINGALONG_GAP
         self.n_sing = 0
+        self._search_yt = None                # signed-out client just for guest searches
         self.fx: list[str] = []             # scratch sounds made at start-up
         self.rng = random.Random(f"{cfg.party_date}-fx")
         self.next_vibe: dt.datetime | None = None
@@ -461,14 +462,9 @@ class Director:
     def find_song(self, text: str) -> Song | None:
         """A song from tonight's list, or else the best clean match on YouTube Music."""
         req = parse_request(text)
-        match = next((s for s in self.everything if s.key == req.key), None)
+        match = self.local_match(req)
         if match is None:
-            try:
-                results = self.yt.search(f"{req.title} {req.artist}".strip(), filter="songs", limit=3)
-            except Exception:
-                results = []
-            hit = next((r for r in results if r.get("videoId") and not r.get("isExplicit")
-                        and not title_looks_explicit(r.get("title") or "")), None)
+            hit = self.search_youtube(f"{req.title} {req.artist}".strip())
             if not hit:
                 return None
             req.video_id = hit["videoId"]
@@ -482,6 +478,37 @@ class Director:
                     self.everything.append(req)
                 self.add_to_playlist(req)
         return match
+
+    def local_match(self, req: Song) -> Song | None:
+        """A song on tonight's list: the exact title, or one the guest only typed part of."""
+        exact = next((s for s in self.everything if s.key == req.key), None)
+        if exact or len(req.key) < 4:
+            return exact
+        return next((s for s in self.everything if s.video_id and req.key in s.key), None)
+
+    def search_youtube(self, query: str) -> dict | None:
+        """The best clean match on YouTube Music. Tries a fresh signed-out search first (the
+        saved sign-in can expire mid-party), then the signed-in one, then music videos."""
+        if self._search_yt is None:
+            try:
+                from ytmusicapi import YTMusic
+                self._search_yt = YTMusic()
+            except Exception:
+                self._search_yt = self.yt
+        clean = lambda r: r.get("videoId") and not r.get("isExplicit") \
+            and not title_looks_explicit(r.get("title") or "")
+        for yt in dict.fromkeys([self._search_yt, self.yt]):
+            for kind in ("songs", "videos"):
+                for attempt in (1, 2):
+                    try:
+                        hit = next((r for r in yt.search(query, filter=kind, limit=5) or [] if clean(r)), None)
+                        if hit:
+                            return hit
+                        break
+                    except Exception as e:
+                        print(f"  (song search for '{query}' failed: {type(e).__name__}, retrying)")
+                        time.sleep(0.5)
+        return None
 
     def request(self, text: str):
         text = text.strip()
@@ -890,6 +917,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <button class="mode" data-m="5" style="background:#e53935">🚀 On fire</button></div></div>
  <div class="card row">
   <button class="act" id="stop">⏹ Stop music</button>
+  <button class="act" id="mute">🔇 DJ voice off</button>
   <button class="act" id="skip">⏭ Next song</button>
   <button class="act" id="hype">🎤 Hype the crowd</button>
   <button class="act" id="blk">🚫 Block this song</button>
@@ -936,7 +964,7 @@ function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function fxAudio(name){ const a=new Audio('/audio/'+name); a.volume=SOUND.voice/100; a.play().catch(()=>{}); return a; }
 function playAudio(url, rate){ return new Promise(res=>{ const a=new Audio(url); a.volume=SOUND.voice/100; a.playbackRate=rate||1; a.onended=res; a.onerror=res; a.play().catch(res); }); }
 async function talk(list, p){
-  if(!list || !list.length) return;
+  if(!list || !list.length || SOUND.mute) return;
   if(p) await ramp(p, 100, DUCK, 1);
   for(const a of list){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url); }
   $('voice').textContent=''; if(p) ramp(p, DUCK, 100, 1.5);
@@ -960,6 +988,7 @@ async function next(err){
     P[ni].getIframe().style.zIndex = 2; if(old) P[1-ni].getIframe().style.zIndex = 1;
     $('title').textContent=t.title; $('artist').textContent=t.artist+'  ·  '+t.tier; $('fill').style.width='0';
     load();
+    if(SOUND.mute) t.announce = [];   // DJ voice switched off: music only
     const target = (t.announce && t.announce.length) ? DUCK : 100;
     const fxk = (!err && old && t.fx) ? t.fx : '';
     if(fxk === 'riser'){            // trance-style build-up over the old song, then the drop
@@ -1000,7 +1029,7 @@ async function singAlong(sg, p){   // the crowd's on fire: music down, everybody
   singing = true;
   try{
     await ramp(p, p._v ?? 100, DUCK, 0.8);
-    if(sg.announce){ $('voice').textContent='🎤 '+sg.announce.text; await playAudio(sg.announce.url); $('voice').textContent=''; }
+    if(sg.announce && !SOUND.mute){ $('voice').textContent='🎤 '+sg.announce.text; await playAudio(sg.announce.url); $('voice').textContent=''; }
     $('sing').innerHTML = '🎤 Everybody sing!' + (sg.words ? '<div>“'+esc(sg.words)+'”</div>' : ''); $('sing').style.display='block';
     await ramp(p, DUCK, Math.min(DUCK, 12), 0.6);
     await sleep(8000);
@@ -1113,6 +1142,11 @@ function camOff(){
 }
 $('cam').onclick = () => cam ? camOff() : camOn();
 $('skip').onclick = ()=>{ upcoming=null; next(false); };
+function showMute(){ $('mute').textContent = SOUND.mute ? '🔊 DJ voice on' : '🔇 DJ voice off';
+  $('mute').style.background = SOUND.mute ? '#b71c1c' : ''; }
+$('mute').onclick = ()=>{ SOUND.mute = !SOUND.mute; applySound(); showMute();
+  toast(SOUND.mute ? 'DJ voice off: no announcements, just music' : 'DJ voice back on'); };
+showMute();
 $('hype').onclick = async ()=>{ const r = await post('/hype'); talk(r.announce, P[active]); };
 $('blk').onclick = async ()=>{ const r = await post('/block?v=song'); if(r.skip){ upcoming=null; next(false);} load(); };
 $('blka').onclick = async ()=>{ const r = await post('/block?v=artist'); if(r.skip){ upcoming=null; next(false);} load(); };

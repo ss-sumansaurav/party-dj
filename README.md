@@ -188,7 +188,7 @@ python dj.py
     requested song (or the birthday song) is playing: then it plays right after. Every request
     is added to the YouTube Music playlist, with who asked for it in the playlist's
     description, and saved in `requests.csv`.
-11. **🎚 Sound** (under the request queue): sliders for the music volume, the DJ voice volume, and how far the music dips
+11. **🎚 Sound** (under the request queue). The **🔇 DJ voice off** button next to Stop music silences every announcement (music and effects keep going); press it again to bring the DJ back. Also: sliders for the music volume, the DJ voice volume, and how far the music dips
     under the voice. Bass and treble can't be changed from the page (YouTube's player doesn't
     allow it): use the speaker's own controls.
 13. **Dance-floor call-out:** when the crowd camera (or your vibe scores) says people aren't
