@@ -18,3 +18,8 @@ venv/
 .DS_Store
 partydj/horn.wav
 announcements/horn.wav
+android/app/src/main/python/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties

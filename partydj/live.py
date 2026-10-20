@@ -478,14 +478,18 @@ def serve(director: Director, songbook: Songbook) -> str:
     return f"http://localhost:{PORT}/"
 
 
-def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: str = "songs.yaml"):
+def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: str = "songs.yaml",
+        open_browser: bool = True, on_ready=None):
     AUDIO_DIR.mkdir(exist_ok=True)
     director = Director(cfg, yt, plan, playlist_link, config_path)
     director.prepare()
     book = Songbook(songs_path, yt, director)
     book.page_title = f"{cfg.birthday_person_name}'s party songs"
     url = serve(director, book)
-    webbrowser.open(url)
+    if on_ready:
+        on_ready(url)
+    if open_browser:
+        webbrowser.open(url)
     print(f"\nThe DJ page is open: {url}")
     print("Click the big START button on it. Keep this window and that page open all night.")
     print("Press Ctrl-C here to finish.\n")
@@ -538,7 +542,10 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 </style></head><body><main>
 <div id="toast"></div>
 <h1>🎧 __TITLE__</h1>
-<div style="margin-bottom:8px"><a href="/songs" target="_blank" style="color:var(--pink);font-size:18px">🎵 See, add or remove party songs</a> <small style="color:var(--dim)">(opens in a new tab, the music keeps playing)</small></div>
+<div style="margin-bottom:8px"><a href="/songs" id="songslink" style="color:var(--pink);font-size:18px">🎵 See, add or remove party songs</a> <small style="color:var(--dim)">(the music keeps playing)</small></div>
+<div id="songsbox" style="position:fixed;inset:0;background:var(--bg);z-index:50;display:none;flex-direction:column">
+ <div style="text-align:right;padding:8px"><button class="act" id="songsclose">✕ Back to the DJ</button></div>
+ <iframe id="songsframe" style="flex:1;border:0;width:100%"></iframe></div>
 <div id="down">The DJ program isn't running. In Terminal run: <b>python dj.py</b></div>
 <button id="start">▶ START THE PARTY</button>
 <div id="players"><div id="p0"></div><div id="p1"></div></div>
@@ -652,14 +659,23 @@ $('stop').onclick = async ()=>{
   else { setStopped(false); p.playVideo(); ramp(p, 0, 100, 1.5); toast('Music back on'); }
 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+$('songslink').onclick = e => { e.preventDefault(); $('songsframe').src='/songs'; $('songsbox').style.display='flex'; };
+$('songsclose').onclick = () => { $('songsbox').style.display='none'; $('songsframe').src='about:blank'; load(); };
+function heard(said){ $('req').value = said; toast('Heard: '+said); setTimeout(()=>$('reqb').click(), 600); }
 $('mic').onclick = ()=>{
+  const p = P[active], wasStopped = stopped;
+  const done = ()=>{ $('mic').classList.remove('on'); $('mic').textContent='🎙 Speak'; if(p && cur && !wasStopped) ramp(p, 15, 100, 1); };
+  if(window.AndroidSpeech){   // inside the phone app: the phone's own speech recogniser
+    window.onAndroidSpeech = said => { done(); if(said) heard(said); else toast("Didn't catch that, try again"); };
+    $('mic').classList.add('on'); $('mic').textContent='🎙 Listening…';
+    if(p && cur && !stopped) p.setVolume(15);
+    AndroidSpeech.listen(); return;
+  }
   if(!SR){ toast('The mic needs Google Chrome'); return; }
   const r = new SR(); r.lang='en-IN'; r.interimResults=false; r.maxAlternatives=1;
-  const p = P[active], wasStopped = stopped;
   $('mic').classList.add('on'); $('mic').textContent='🎙 Listening…';
   if(p && cur && !stopped) p.setVolume(15);   // turn the music down so it can hear you
-  const done = ()=>{ $('mic').classList.remove('on'); $('mic').textContent='🎙 Speak'; if(p && cur && !wasStopped) ramp(p, 15, 100, 1); };
-  r.onresult = e=>{ const said = e.results[0][0].transcript.trim(); $('req').value = said; toast('Heard: '+said); setTimeout(()=>$('reqb').click(), 600); };
+  r.onresult = e=>heard(e.results[0][0].transcript.trim());
   r.onerror = e=>{ toast(e.error==='not-allowed' ? 'Allow the microphone for this page, then try again' : "Didn't catch that, try again"); };
   r.onend = done; r.start();
 };
