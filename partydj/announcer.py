@@ -50,6 +50,16 @@ LINES = {
         "We got a request coming in, and it's a good one! This is {next}!",
         "Somebody's got great taste! By request, here's {next}!",
     ],
+    "guest_request": [
+        "This one's a request from {who}! Great choice. Let's go, {next}!",
+        "Shoutout to {who}, you asked for it, you got it! It's {next}!",
+        "Request coming up for {who}! Everybody, this is {next}!",
+    ],
+    "dance_floor": [
+        "Hey, I see a lot of people sitting down! Come on, everybody on the dance floor. It's {next}!",
+        "Dance floor's looking lonely! Grab a friend and get up here. This is {next}!",
+        "No more standing around! Everybody to the dance floor, right now. It's {next}!",
+    ],
     "hype": [
         "Make some noise for {name}! Louder! Let me hear you!",
         "Everybody, hands up! Give it up for {host}, what a party!",
@@ -72,7 +82,7 @@ LINES = {
 # How hyped each kind of line sounds (1 calm .. 5 full hype). Song lines use the song's energy.
 KIND_ENERGY = {"opening": 4, "Warm-up": 3, "Build": 4, "Peak": 5, "Peak 2": 5, "Wind-down": 2,
                "vibe_up": 5, "request": 4, "hype": 5, "birthday_intro": 4, "cake": 5,
-               "shoutout": 4, "closing": 3}
+               "shoutout": 4, "closing": 3, "guest_request": 4, "dance_floor": 5}
 
 
 # Hindi and Hinglish lines, spoken by the Hindi voice. English words stay in English letters.
@@ -106,6 +116,14 @@ LINES_HI = {
     "request": [
         "Request आई है, और क्या कमाल की choice है! ये है {next}!",
     ],
+    "guest_request": [
+        "{who} की फ़रमाइश पर, ये है {next}! Let's go!",
+        "ये गाना {who} के लिए, जिन्होंने request किया! चलो, {next}!",
+    ],
+    "dance_floor": [
+        "अरे, सब बैठे क्यों हो? चलो dance floor पे! ये है {next}!",
+        "Dance floor खाली क्यों है? सब लोग आ जाओ! चलो, {next}!",
+    ],
     "hype": [
         "{name} के लिए ज़ोरदार तालियाँ! और ज़ोर से!",
         "Mumbai, आवाज़ नहीं आई! और ज़ोर से!",
@@ -130,7 +148,7 @@ class Writer:
         self.rng = random.Random(seed)
         self.decks: dict[tuple[str, str], list[str]] = {}
 
-    def line(self, kind: str, next_title: str = "") -> str:
+    def line(self, kind: str, next_title: str = "", who: str = "") -> str:
         hindi = kind in LINES_HI and self.rng.random() < self.hindi_share
         source = LINES_HI if hindi else LINES
         deck = self.decks.get((kind, hindi))
@@ -140,7 +158,7 @@ class Writer:
             self.decks[(kind, hindi)] = deck
         name, host = (HINDI_NAMES.get(self.name, self.name), HINDI_NAMES.get(self.host, self.host)) if hindi \
             else (self.name, self.host)
-        text = deck.pop().format(name=name, host=host, next=next_title)
+        text = deck.pop().format(name=name, host=host, next=next_title, who=who)
         if len(text.split()) > MAX_WORDS:
             raise ValueError(f"Announcement too long for 15 seconds: {text}")
         return text

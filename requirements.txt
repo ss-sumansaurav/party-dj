@@ -3,3 +3,4 @@ gTTS>=2.5
 PyYAML>=6.0
 python-dotenv>=1.0
 edge-tts>=6.1.9
+segno>=1.5

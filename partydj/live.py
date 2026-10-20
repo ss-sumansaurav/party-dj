@@ -12,6 +12,8 @@ import html
 import datetime as dt
 import http.server
 import json
+import re
+import socket
 import threading
 import time
 import urllib.parse
@@ -22,13 +24,54 @@ from . import announcer
 from .config import load_config
 from .planner import PHASE_RULES, Slot
 from .songbook import Songbook
-from .songs import Song, is_blocked, parse_request
+from .songs import Song, is_blocked, parse_request, title_looks_explicit
 
 MOOD_LOG = Path("mood_log.csv")
 AUDIO_DIR = Path("announcements")
 PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
+GUEST_LIMIT = 3            # songs one guest phone can have waiting
+DANCE_CALL_GAP = 20 * 60   # seconds between "come to the dance floor" call-outs
 TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2"}
+
+
+def clean_name(name: str) -> str:
+    """A guest's name, safe to show and say: letters, spaces and a little punctuation."""
+    name = re.sub(r"<[^>]*>", "", name)
+    name = re.sub(r"[^\w\u0900-\u097F .'-]", "", name, flags=re.UNICODE)
+    name = " ".join(re.sub(r"[\d_]", "", name).split())[:24]
+    return "" if title_looks_explicit(name) else name
+
+
+def who(names: list[str]) -> str:
+    if len(names) <= 2:
+        return " and ".join(names)
+    return f"{names[0]}, {names[1]} and {len(names) - 2} more"
+
+
+def lan_ip() -> str | None:
+    """This device's address on the Wi-Fi, so guests' phones can reach the request page."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+def guest_url() -> str | None:
+    ip = lan_ip()
+    return f"http://{ip}:{PORT}/req" if ip else None
+
+
+def qr_svg(text: str) -> bytes:
+    import io
+
+    import segno
+
+    buf = io.BytesIO()
+    segno.make(text, error="m").save(buf, kind="svg", scale=6, border=2, dark="#000", light="#fff")
+    return buf.getvalue()
 
 
 def log_mood(score: int, playing: str, decision: str):
@@ -80,6 +123,9 @@ class Director:
         self.force_next = False
         self.vibe_due = False
         self.cam_on = False                # crowd camera scores the vibe instead of the host
+        self.guest_reqs: dict[str, dict] = {}   # song key -> song, names, ips, first asked
+        self.last_dance_call = 0.0
+        self.dance_call_pending = False
         self.next_vibe: dt.datetime | None = None
         self.since_announce = 0
         self.closing_done = False
@@ -157,6 +203,9 @@ class Director:
         for cand, why in self.inserts:
             if self.playable(cand):
                 return cand, why
+        for r in self.guest_queue():
+            if self.playable(r["song"]):
+                return r["song"], "guest"
         if self.one_shot_tier:
             song = self.pick_by_tier(self.one_shot_tier)
             if song:
@@ -167,7 +216,11 @@ class Director:
     def up_next(self) -> dict | None:
         with self.lock:
             song, _ = self.choose()
-        return {"title": song.title, "artist": song.lead_artist, "tier": TIERS[song.energy]} if song else None
+        if not song:
+            return None
+        req = self.guest_reqs.get(song.key)
+        tier = f"Requested by {who(req['names'])}" if req else TIERS[song.energy]
+        return {"title": song.title, "artist": song.lead_artist, "tier": tier}
 
     # ---------- the main decision ----------
     def next_track(self, error: bool = False) -> dict:
@@ -196,6 +249,8 @@ class Director:
                     self.inserts.pop(0)
                 if why == "request":
                     self.inserts.pop(0)
+                elif why == "guest":
+                    names = self.guest_reqs.pop(song.key)["names"]
                 elif why in ("boost", "hold"):
                     self.one_shot_tier = None
             if song is None:
@@ -209,11 +264,21 @@ class Director:
                 a = self.speak("opening", self.fixed["opening"])
                 announce += [a] if a else []
                 self.since_announce = 0
-            elif reason in ("boost", "request") and not announce:
-                a = self.speak("vibe_up" if reason == "boost" else "request",
-                               self.writer.line("vibe_up" if reason == "boost" else "request", song.title))
+            elif reason == "guest" and not announce:
+                a = self.speak("guest_request", self.writer.line("guest_request", song.title, who=who(names)))
                 announce += [a] if a else []
                 self.since_announce = 0
+            elif reason == "request" and not announce:
+                a = self.speak("request", self.writer.line("request", song.title))
+                announce += [a] if a else []
+                self.since_announce = 0
+            elif self.dance_call_pending and not announce:
+                # The floor's quiet: call people up, but not over and over.
+                self.dance_call_pending = False
+                if self.dance_call_ok():
+                    a = self.speak("dance_floor", self.writer.line("dance_floor", song.title))
+                    announce += [a] if a else []
+                    self.since_announce = 0
             elif not announce:
                 self.since_announce += 1
                 closing_time = self.elapsed_min() >= self.cfg.duration_minutes - 4
@@ -295,6 +360,8 @@ class Director:
             decision = {"up": "energy up one tier", "hold": "hold the energy", "plan": "keep the plan"}[choice]
             if source == "camera":
                 decision += " (crowd camera)"
+            if choice == "up":
+                self.dance_call_pending = True
             if choice == "up" and cur:
                 self.one_shot_tier = min(5, cur.energy + 1)
                 self.notice(f"Crowd's quiet. Next song goes up to {TIERS[self.one_shot_tier]}.")
@@ -302,6 +369,13 @@ class Director:
                 self.one_shot_tier = cur.energy
                 self.notice("Crowd's on fire 🔥 Holding the energy.")
         log_mood(score, cur.label() if cur else "", decision)
+
+    def dance_call_ok(self) -> bool:
+        now = time.monotonic()
+        if self.last_dance_call and now - self.last_dance_call < DANCE_CALL_GAP:
+            return False
+        self.last_dance_call = now
+        return True
 
     def set_cam(self, on: bool):
         with self.lock:
@@ -311,10 +385,8 @@ class Director:
         self.notice("📷 Crowd camera on: it scores the dance floor every 2 minutes." if on
                     else "📷 Crowd camera off: back to asking you for vibe scores.")
 
-    def request(self, text: str):
-        text = text.strip()
-        if not text:
-            return
+    def find_song(self, text: str) -> Song | None:
+        """A song from tonight's list, or else the best clean match on YouTube Music."""
         req = parse_request(text)
         match = next((s for s in self.everything if s.key == req.key), None)
         if match is None:
@@ -322,21 +394,75 @@ class Director:
                 results = self.yt.search(f"{req.title} {req.artist}".strip(), filter="songs", limit=3)
             except Exception:
                 results = []
-            hit = next((r for r in results if r.get("videoId") and not r.get("isExplicit")), None)
+            hit = next((r for r in results if r.get("videoId") and not r.get("isExplicit")
+                        and not title_looks_explicit(r.get("title") or "")), None)
             if not hit:
-                self.notice(f"🙋 Couldn't find '{req.title}' on YouTube Music.")
-                return
+                return None
             req.video_id = hit["videoId"]
             req.seconds = hit.get("duration_seconds")
             req.title = hit.get("title") or req.title
-            match = req
-            with self.lock:
-                self.everything.append(req)
-            self.add_to_playlist(req)
+            req.artist = ", ".join(a["name"] for a in hit.get("artists") or []) or req.artist
+            match = next((s for s in self.everything if s.key == req.key), None)
+            if match is None:
+                match = req
+                with self.lock:
+                    self.everything.append(req)
+                self.add_to_playlist(req)
+        return match
+
+    def request(self, text: str):
+        text = text.strip()
+        if not text:
+            return
+        match = self.find_song(text)
+        if match is None:
+            self.notice(f"🙋 Couldn't find '{parse_request(text).title}' on YouTube Music.")
+            return
         with self.lock:
             self.played.discard(match.key)
             self.inserts.append((match, "request"))
         self.notice(f"🙋 Request '{match.title}' plays next.")
+
+    def guest_request(self, name: str, text: str, ip: str) -> tuple[bool, str]:
+        """A request from a guest's phone. The most-requested song plays first; on a tie,
+        the one asked for first."""
+        name = clean_name(name)
+        text = " ".join(text.split())[:80]
+        if not name:
+            return False, "Please write your name."
+        if not text:
+            return False, "Please write the song name."
+        with self.lock:
+            mine = [r for r in self.guest_reqs.values() if ip in r["ips"]]
+        if len(mine) >= GUEST_LIMIT:
+            return False, f"You already have {GUEST_LIMIT} songs waiting. Ask again once one has played!"
+        song = self.find_song(text)
+        if song is None:
+            return False, "Couldn't find that song. Try adding the singer's name."
+        with self.lock:
+            if is_blocked(song, *self.blocked) or song.full:
+                return False, f"Sorry, '{song.title}' isn't on tonight's list."
+            if self.current and song.key == self.current.key:
+                return False, f"'{song.title}' is playing right now! 🎉"
+            r = self.guest_reqs.setdefault(song.key, {"song": song, "names": [], "ips": set(), "first": time.time()})
+            if ip in r["ips"]:
+                return False, f"You've already asked for '{song.title}'."
+            r["ips"].add(ip)
+            if name not in r["names"]:
+                r["names"].append(name)
+            self.played.discard(song.key)
+            pos = [q["song"].key for q in self.guest_queue()].index(song.key) + 1
+        others = len(r["names"]) - 1
+        self.notice(f"📱 {name} requested '{song.title}'" + (f" (+{others} more)" if others else ""))
+        return True, f"Got it, {name}! '{song.title}' is number {pos} in the request queue."
+
+    def guest_queue(self) -> list[dict]:
+        return sorted(self.guest_reqs.values(), key=lambda r: (-len(r["names"]), r["first"]))
+
+    def queue_view(self) -> list[dict]:
+        with self.lock:
+            return [{"title": r["song"].title, "artist": r["song"].lead_artist, "count": len(r["names"]),
+                     "who": who(r["names"])} for r in self.guest_queue()][:10]
 
     def add_to_playlist(self, song: Song):
         pid = urllib.parse.parse_qs(urllib.parse.urlparse(self.playlist_link or "").query).get("list", [None])[0]
@@ -412,13 +538,14 @@ class Director:
                 "scores": self.scores[-6:], "force_next": force,
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
-                "up_next": self.up_next(),
+                "up_next": self.up_next(), "queue": self.queue_view(), "guest_url": guest_url(),
             }
 
 
 def serve(director: Director, songbook: Songbook) -> str:
     title = html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party DJ")
     page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds)).replace("__TITLE__", title)
+    guest_page = GUEST_PAGE.replace("__TITLE__", html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party"))
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, code, body=b"", kind="text/html; charset=utf-8"):
@@ -431,12 +558,33 @@ def serve(director: Director, songbook: Songbook) -> str:
         def _json(self, obj):
             self._send(200, json.dumps(obj).encode(), "application/json")
 
+        def _guest(self, method: str, u) -> bool:
+            """Guests' phones reach only the request page; everything else is for this device."""
+            if self.client_address[0].startswith("127.") or self.client_address[0] == "::1":
+                if not (u.path in ("/req", "/api/queue") or (method == "POST" and u.path == "/api/req")):
+                    return False
+            if method == "GET" and u.path == "/req":
+                self._send(200, guest_page.encode())
+            elif method == "GET" and u.path == "/api/queue":
+                self._json({"queue": director.queue_view(), "now": director.current.title if director.current else None})
+            elif method == "POST" and u.path == "/api/req":
+                q = urllib.parse.parse_qs(u.query)
+                ok, msg = director.guest_request(q.get("name", [""])[0], q.get("song", [""])[0], self.client_address[0])
+                self._json({"ok": ok, "msg": msg})
+            else:
+                self._send(403, b"This page is only for the DJ's device.", "text/plain")
+            return True
+
         def do_GET(self):
             u = urllib.parse.urlparse(self.path)
+            if self._guest("GET", u):
+                return
             if songbook.handle(self, "GET", u.path, {}):
                 return
             if u.path == "/state":
                 return self._json(director.state())
+            if u.path == "/qr.svg":
+                return self._send(200, qr_svg(guest_url() or ""), "image/svg+xml")
             if u.path.startswith("/audio/"):
                 f = AUDIO_DIR / Path(urllib.parse.unquote(u.path[7:])).name
                 if f.exists():
@@ -447,6 +595,8 @@ def serve(director: Director, songbook: Songbook) -> str:
 
         def do_POST(self):
             u = urllib.parse.urlparse(self.path)
+            if self._guest("POST", u):
+                return
             q = urllib.parse.parse_qs(u.query)
             if songbook.handle(self, "POST", u.path, q):
                 return
@@ -473,7 +623,8 @@ def serve(director: Director, songbook: Songbook) -> str:
         def log_message(self, *args):
             pass
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    # Open to the Wi-Fi so guests can scan the QR code; only the request page is shared.
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return f"http://localhost:{PORT}/"
 
@@ -552,6 +703,14 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="ui" hidden><div id="left">
  <div class="card"><div id="phase" style="color:var(--dim)"></div>
   <div id="title">…</div><div id="artist"></div><div id="voice"></div><div id="bar"><div id="fill"></div></div></div>
+ <div class="card" id="camcard"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:center">
+  <div style="flex:1;min-width:240px"><div style="font-size:22px;font-weight:700">📷 Crowd camera</div>
+   <div id="camlabel" style="font-size:26px;font-weight:700;margin:10px 0;color:var(--pink)">Off</div>
+   <div style="height:14px;background:#333;border-radius:7px;overflow:hidden;margin-bottom:12px"><div id="camfill" style="height:100%;width:0;background:#7cb342;transition:width .4s"></div></div>
+   <button class="act" id="cam" style="background:var(--pink);font-size:20px;padding:14px 26px">📷 Turn camera on</button>
+   <div style="color:var(--dim);font-size:13px;margin-top:10px">Point it at the dance floor. It measures how much people move and steers the music. Only a movement number is kept: no video or photos are saved or sent, and no faces are looked at.</div></div>
+  <div style="flex:1.2;min-width:260px"><video id="camv" autoplay muted playsinline style="width:100%;max-height:300px;background:#000;border-radius:14px;transform:scaleX(-1)"></video></div>
+ </div></div>
  <div class="card"><b>Pick the vibe</b><div class="row" style="margin-top:10px">
   <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
   <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
@@ -571,12 +730,11 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <div class="card"><b>For you</b><div id="scores" style="color:var(--dim)"></div><ul id="notices"></ul></div>
 </div>
 <div id="side"><div class="card"><b>⏭ Up next</b><div id="nxtitle">…</div><div id="nxartist"></div></div>
- <div class="card"><b>📷 Crowd camera</b>
-  <div style="color:var(--dim);font-size:13px;margin:6px 0">Watches how much the room is moving and steers the music. Only a movement number is kept: no video or photos are saved or sent anywhere, and no faces are looked at.</div>
-  <button class="act" id="cam">Turn camera on</button>
-  <video id="camv" autoplay muted playsinline style="display:none;width:100%;border-radius:10px;margin-top:10px;transform:scaleX(-1)"></video>
-  <div id="cammeter" style="display:none"><div style="height:8px;background:#333;border-radius:4px;margin-top:8px;overflow:hidden"><div id="camfill" style="height:100%;width:0;background:#7cb342"></div></div>
-  <div id="camlabel" style="margin-top:6px;color:var(--dim)"></div></div></div></div>
+ <div class="card"><b>📱 Guests: scan to request a song</b>
+  <div id="qr" style="background:#fff;padding:10px;border-radius:12px;width:fit-content;margin:10px auto"></div>
+  <div id="qrurl" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
+  <div style="color:var(--dim);font-size:12px;margin-top:4px">Guests need to be on the same Wi-Fi.</div></div>
+ <div class="card"><b>🙋 Request queue</b><div style="color:var(--dim);font-size:12px">Most asked-for first, then whoever asked first</div><ol id="queue" style="text-align:left;padding-left:22px;margin:8px 0"></ol></div></div>
 </div>
 <div id="overlay"><h2>📊 Vibe check! How's the crowd?</h2><div class="row">
  <button class="mode" style="background:#3949ab" onclick="score(1)">1<br><small>chill</small></button>
@@ -589,6 +747,8 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 const FADE = __FADE__, DUCK = 22, PREP = 25;
 let stopped = false, P = [null, null], ready = 0, active = 0, cur = null, upcoming = null, busy = false, fetching = false;
 const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let shownQR = null;
 function toast(t){ const e=$('toast'); e.textContent=t; e.style.display='block'; clearTimeout(e.t); e.t=setTimeout(()=>e.style.display='none',2500); }
 async function post(path){ const r = await fetch(path,{method:'POST'}); if(!r.ok) throw 0; return r.json(); }
 function ramp(p, from, to, secs){ return new Promise(res=>{ const steps=Math.max(1,Math.round(secs*10)); let i=0;
@@ -642,6 +802,10 @@ async function load(){
     $('notices').innerHTML = s.notices.map(n=>'<li>'+n.replace(/</g,'&lt;')+'</li>').join('');
     const n = upcoming && !upcoming.done ? upcoming : s.up_next;
     $('nxtitle').textContent = n ? n.title : 'Nothing left to play'; $('nxartist').textContent = n ? n.artist+'  ·  '+n.tier : '';
+    $('queue').innerHTML = s.queue.length ? s.queue.map(q=>'<li>'+esc(q.title)+' <small style="color:var(--dim)">· '+esc(q.who)+(q.count>1?' ('+q.count+')':'')+'</small></li>').join('')
+      : '<li style="list-style:none;margin-left:-22px;color:var(--dim)">No requests yet</li>';
+    if(s.guest_url && s.guest_url !== shownQR){ shownQR = s.guest_url; $('qrurl').textContent = s.guest_url;
+      $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
     if(s.force_next && cur){ upcoming=null; next(false); }
   } catch(e){ $('down').style.display='block'; }
 }
@@ -697,8 +861,8 @@ function camTick(){
 async function camOn(){
   try { cam = await navigator.mediaDevices.getUserMedia({video:{width:320,height:240}, audio:false}); }
   catch(e){ toast('Allow the camera for this page, then try again'); return; }
-  $('camv').srcObject = cam; $('camv').style.display='block'; $('cammeter').style.display='block';
-  $('cam').textContent = 'Turn camera off'; camHist = []; camPrev = null;
+  $('camv').srcObject = cam;
+  $('cam').textContent = 'Turn camera off'; $('cam').style.background = '#333'; camHist = []; camPrev = null;
   camTimer = setInterval(camTick, 500);
   camSend = setInterval(()=>{ if(!camHist.length) return;
     const avg = camHist.reduce((a,b)=>a+b,0)/camHist.length; camHist = [];
@@ -707,8 +871,8 @@ async function camOn(){
 }
 function camOff(){
   clearInterval(camTimer); clearInterval(camSend); if(cam) cam.getTracks().forEach(t=>t.stop()); cam = null;
-  $('camv').srcObject = null; $('camv').style.display='none'; $('cammeter').style.display='none';
-  $('cam').textContent = 'Turn camera on'; post('/cam?v=off').then(load);
+  $('camv').srcObject = null; $('camlabel').textContent = 'Off'; $('camfill').style.width = '0';
+  $('cam').textContent = '📷 Turn camera on'; $('cam').style.background = 'var(--pink)'; post('/cam?v=off').then(load);
 }
 $('cam').onclick = () => cam ? camOff() : camOn();
 $('skip').onclick = ()=>{ upcoming=null; next(false); };
@@ -719,3 +883,56 @@ $('reqb').onclick = ()=>{ const v=$('req').value.trim(); if(!v) return; post('/r
 </script>
 <script src="https://www.youtube.com/iframe_api"></script>
 </body></html>"""
+
+
+GUEST_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Request a song</title>
+<style>
+ :root{--bg:#0d0d12;--card:#1b1b24;--pink:#ff2d7a;--txt:#f4f4f8;--dim:#a0a0b0}
+ *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--txt);text-align:center}
+ main{max-width:520px;margin:auto;padding:16px} h1{font-size:26px;margin:10px 0 2px} .sub{color:var(--dim);margin-bottom:12px}
+ .card{background:var(--card);border-radius:16px;padding:16px;margin:12px 0;text-align:left}
+ label{display:block;color:var(--dim);font-size:14px;margin:10px 0 4px}
+ input{width:100%;font-size:18px;padding:13px;border-radius:12px;border:0}
+ button{font-size:19px;padding:14px;border-radius:14px;border:0;background:var(--pink);color:#fff;width:100%;margin-top:14px;cursor:pointer}
+ button:disabled{opacity:.6} .small{width:auto;font-size:14px;padding:7px 12px;margin:0;background:#333}
+ #msg{min-height:24px;margin-top:12px;font-size:17px} .ok{color:#7cdb7c} .bad{color:#ff8a80}
+ .q{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #2a2a35}
+ .q div{flex:1} .q small{color:var(--dim)} .n{color:var(--pink);font-weight:700;width:26px}
+</style></head><body><main>
+<h1>🎉 __TITLE__</h1><div class="sub">Ask the DJ for a song!</div>
+<div id="now" class="sub"></div>
+<div class="card">
+ <label for="name">Your name (the DJ will say it)</label><input id="name" maxlength="24" placeholder="e.g. Riya" autocomplete="given-name">
+ <label for="song">Song</label><input id="song" maxlength="80" placeholder="Song name, and singer if you know">
+ <button id="go">🎶 Request it</button><div id="msg"></div></div>
+<div class="card"><b>Request queue</b> <small style="color:var(--dim)">Most asked-for plays first</small><div id="queue"></div></div>
+</main><script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+try { $('name').value = localStorage.getItem('dj-name') || ''; } catch(e){}
+async function ask(song){
+  const name = $('name').value.trim();
+  if(!name){ $('msg').className='bad'; $('msg').textContent='Please write your name first.'; $('name').focus(); return; }
+  try { localStorage.setItem('dj-name', name); } catch(e){}
+  $('go').disabled = true; $('msg').className=''; $('msg').textContent = 'Finding it…';
+  try {
+    const r = await (await fetch('/api/req?'+new URLSearchParams({name, song}), {method:'POST'})).json();
+    $('msg').className = r.ok ? 'ok' : 'bad'; $('msg').textContent = r.msg; if(r.ok) $('song').value = '';
+  } catch(e){ $('msg').className='bad'; $('msg').textContent = "Couldn't reach the DJ. Are you on the party Wi-Fi?"; }
+  $('go').disabled = false; load();
+}
+$('go').onclick = () => { const s = $('song').value.trim(); if(!s){ $('msg').className='bad'; $('msg').textContent='Write a song name.'; return; } ask(s); };
+$('song').onkeydown = e => { if(e.key==='Enter') $('go').click(); };
+async function load(){
+  try {
+    const r = await (await fetch('/api/queue')).json();
+    $('now').textContent = r.now ? '▶ Now playing: '+r.now : '';
+    $('queue').innerHTML = r.queue.length ? r.queue.map((q,i)=>`<div class="q"><span class="n">${i+1}</span><div>${esc(q.title)}<br>
+      <small>${esc(q.artist)} · asked by ${esc(q.who)}</small></div><button class="small" data-t="${esc(q.title)}">+ Me too</button></div>`).join('')
+      : '<div style="color:var(--dim);padding:10px 0">No requests yet. Be the first!</div>';
+    document.querySelectorAll('.small').forEach(b => b.onclick = () => ask(b.dataset.t));
+  } catch(e){}
+}
+load(); setInterval(load, 5000);
+</script></body></html>"""

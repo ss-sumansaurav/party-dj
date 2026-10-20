@@ -163,6 +163,16 @@ python dj.py
    shows what plays after the current song. Edits to
    `blocked_*` and `requested_tracks` in `config.yaml` are also picked up within a minute.
 
+10. **Guest requests by QR code:** the DJ page shows a QR code. Guests on the same Wi-Fi scan
+    it, type their name and a song, and the DJ plays it next and says who asked for it. The
+    song most people asked for plays first; on a tie, whoever asked first. Each phone can have
+    3 songs waiting, and "+ Me too" adds a vote. Only the request page is reachable from other
+    phones; the DJ controls stay on this device. The first time, the Mac may ask whether
+    Python can accept incoming connections: click **Allow**.
+11. **Dance-floor call-out:** when the crowd camera (or your vibe scores) says people aren't
+    dancing, the DJ calls everyone to the dance floor before the next song, at most once
+    every 20 minutes.
+
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the
 same thing as `python dj.py`.)
