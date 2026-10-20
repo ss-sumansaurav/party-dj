@@ -103,8 +103,7 @@ python dj.py
 4. **DJ mixing:** each song plays for about 2¾ minutes (`song_play_seconds`), skipping a few
    seconds of long intros, then blends into the next song over `crossfade_seconds`.
 5. **Announcements** every few songs, spoken over the start of a song with the music turned
-   down. The air horn only plays for big moments: the opening, the birthday, an energy boost
-   and the 🎤 Hype button.
+   down, in an upbeat Indian English voice so Ketan's and Poonam's names sound right.
 6. **Pick the vibe:** Auto follows the plan for the time of night. Chill, Groove, Dance,
    Bangers or On fire switch the music to that energy from the next song, until you pick
    Auto again.
@@ -112,9 +111,14 @@ python dj.py
    intro and plays the birthday song in full, then the cake cue and the shout-out.
 8. **Vibe check** every 15 minutes: the page asks for a score from 1 to 5. Two scores of 1–2
    in a row lift the next song one energy level; two of 4–5 hold the energy. Scores go to
-   `mood_log.csv` on the Mac and nowhere else. No camera or microphone is used.
-9. **Buttons:** ⏭ Next song, 🎤 Hype the crowd, 🚫 Block this song, 🚫 Block this artist,
-   and a box to request a song ("Song name - Artist"). Requests play next. Edits to
+   `mood_log.csv` on the Mac and nowhere else. No camera is used, and the microphone is only
+   used when you press 🎙 Speak (see below).
+9. **Buttons:** ⏹ Stop music (fades out; press again to play), ⏭ Next song, 🎤 Hype the crowd, 🚫 Block this song, 🚫 Block this artist,
+   and a box to request a song ("Song name - Artist"). Or press **🎙 Speak** and say the song
+   name: the music dips while it listens, then the request is added. This uses Chrome's speech
+   recognition, which sends that short clip to Google to turn it into text; the first time,
+   Chrome asks to allow the microphone. Requests play next. The **Up next** panel on the right
+   shows what plays after the current song. Edits to
    `blocked_*` and `requested_tracks` in `config.yaml` are also picked up within a minute.
 
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the

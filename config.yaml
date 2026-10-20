@@ -12,9 +12,9 @@ language_ratio:
   hindi: 0.7                   # at least 70% Hindi
   english: 0.3                 # at most 30% English
 
-# DJ voice (Microsoft neural voice via edge-tts). Other young male options:
-# en-US-AndrewNeural, en-US-ChristopherNeural, en-GB-RyanNeural, en-IN-PrabhatNeural
-dj_voice: en-US-BrianNeural
+# DJ voice (Microsoft neural voice via edge-tts). Indian English, so Ketan and Poonam sound right.
+# Other options: en-US-BrianNeural, en-US-AndrewNeural, en-GB-RyanNeural
+dj_voice: en-IN-PrabhatNeural
 
 # DJ mixing: how much of each song to play, and how long songs blend into each other.
 song_play_seconds: 165         # about 2 min 45 s per song (the birthday song plays in full)

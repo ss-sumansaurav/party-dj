@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import random
 import shutil
-import struct
 import subprocess
-import wave
 from pathlib import Path
 
 MAX_WORDS = 32  # about 15 seconds of speech
@@ -91,7 +89,7 @@ class Writer:
         return text
 
 
-DJ_VOICE = "en-US-BrianNeural"  # young, casual male neural voice; change in config.yaml (dj_voice)
+DJ_VOICE = "en-IN-PrabhatNeural"  # Indian English male voice, so Ketan and Poonam sound right; config.yaml dj_voice
 _warned = False
 
 
@@ -101,7 +99,7 @@ def _edge_tts(text: str, out: Path, voice: str):
     import edge_tts
 
     async def go():
-        await edge_tts.Communicate(text, voice, rate="+5%", pitch="+4Hz").save(str(out))
+        await edge_tts.Communicate(text, voice, rate="+12%", pitch="+8Hz", volume="+20%").save(str(out))
 
     asyncio.run(go())
     if not out.exists() or out.stat().st_size < 1000:
@@ -109,7 +107,7 @@ def _edge_tts(text: str, out: Path, voice: str):
 
 
 def speak_to_file(text: str, path: Path, voice: str | None = None) -> Path:
-    """Write speech audio with a young male neural voice (edge-tts).
+    """Write speech audio with an upbeat Indian English male neural voice (edge-tts).
     Falls back to gTTS, then to the Mac's `say`."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -145,40 +143,12 @@ def _has_voice(name: str) -> bool:
     return any(line.split()[0] == name for line in voices.splitlines() if line.strip())
 
 
-SPEED = "1.12"  # play speech a little faster for DJ energy
-HORN = Path(__file__).with_name("horn.wav")
+SPEED = "1.08"  # play speech a little faster for DJ energy
 
 
-def make_horn(path: Path = HORN) -> Path:
-    """Synthesise a short party air-horn sting (no recorded audio involved)."""
-    if path.exists():
-        return path
-    rate = 22050
-    frames = bytearray()
-    for start_hz, length in ((480, 0.16), (480, 0.16), (480, 0.55)):
-        n = int(rate * length)
-        for i in range(n):
-            t = i / rate
-            hz = start_hz * (1 - 0.04 * i / n)  # slight droop, like a real horn
-            # Buzzy chord: sawtooth waves a major third and a fifth apart
-            v = sum(((t * hz * k) % 1.0) * 2 - 1 for k in (1, 1.26, 1.5)) / 3
-            env = min(1.0, i / 300, (n - i) / 600)
-            frames += struct.pack("<h", int(v * env * 0.45 * 32767))
-        frames += bytes(2 * int(rate * 0.06))  # gap between blasts
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(rate)
-        w.writeframes(bytes(frames))
-    return path
-
-
-def play(path: Path, horn: bool = True):
-    """Play an announcement through the Mac's current output (the party speaker),
-    with an air-horn sting first and slightly faster, punchier speech."""
+def play(path: Path):
+    """Play an announcement through the Mac's current output (the party speaker)."""
     player = shutil.which("afplay")
     if not player:
         raise RuntimeError("afplay not found; announcements play on macOS only.")
-    if horn:
-        subprocess.run([player, str(make_horn())], check=False)
     subprocess.run([player, "-r", SPEED, "-q", "1", str(path)], check=False)

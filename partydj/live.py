@@ -8,6 +8,7 @@ between two players, and talks over the intro with the music turned down, like a
 from __future__ import annotations
 
 import csv
+import html
 import datetime as dt
 import http.server
 import json
@@ -27,7 +28,6 @@ AUDIO_DIR = Path("announcements")
 PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
 TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2"}
-HORN_KINDS = {"opening", "birthday_intro", "vibe_up", "hype"}  # air horn for big moments only
 
 
 def log_mood(score: int, playing: str, decision: str):
@@ -101,12 +101,11 @@ class Director:
             print(f"  (couldn't make an announcement: {e})")
             return None
         print(f"  🎤 {text}")
-        return {"url": f"/audio/{path.name}", "horn": kind in HORN_KINDS, "text": text}
+        return {"url": f"/audio/{path.name}", "text": text}
 
     def prepare(self):
         """Make the fixed announcements before the party starts."""
         print("Making announcements...")
-        announcer.make_horn(AUDIO_DIR / "horn.wav")
         w = self.writer
         for kind in ("opening", "birthday_intro", "cake", "shoutout", "closing"):
             self.fixed[kind] = w.line(kind)
@@ -147,6 +146,25 @@ class Director:
         rest = [s for s in self.everything if self.playable(s)]
         return rest[0] if rest else None
 
+    def choose(self) -> tuple[Song | None, str | None]:
+        """What plays next (without changing anything), and why."""
+        if self.birthday_state == "due":
+            return next((s.song for s in self.slots if s.song.full), None), "birthday"
+        for cand, why in self.inserts:
+            if self.playable(cand):
+                return cand, why
+        if self.one_shot_tier:
+            song = self.pick_by_tier(self.one_shot_tier)
+            if song:
+                up = self.current and self.one_shot_tier > self.current.energy
+                return song, "boost" if up else "hold"
+        return (self.pick_by_tier(self.mode) if self.mode != "auto" else self.pick_auto()), None
+
+    def up_next(self) -> dict | None:
+        with self.lock:
+            song, _ = self.choose()
+        return {"title": song.title, "artist": song.lead_artist, "tier": TIERS[song.energy]} if song else None
+
     # ---------- the main decision ----------
     def next_track(self, error: bool = False) -> dict:
         with self.lock:
@@ -168,16 +186,14 @@ class Director:
                     announce += [a] if a else []
                 self.since_announce = 0
             if song is None:
-                while self.inserts and song is None:
-                    cand, why = self.inserts.pop(0)
-                    if self.playable(cand):
-                        song, reason = cand, why
-            if song is None and self.one_shot_tier:
-                song = self.pick_by_tier(self.one_shot_tier)
-                reason = "boost" if self.current and self.one_shot_tier > self.current.energy else "hold"
-                self.one_shot_tier = None
-            if song is None:
-                song = self.pick_by_tier(self.mode) if self.mode != "auto" else self.pick_auto()
+                song, why = self.choose()
+                reason = reason or why
+                while self.inserts and not self.playable(self.inserts[0][0]):
+                    self.inserts.pop(0)
+                if why == "request":
+                    self.inserts.pop(0)
+                elif why in ("boost", "hold"):
+                    self.one_shot_tier = None
             if song is None:
                 return {"done": True}
 
@@ -342,11 +358,13 @@ class Director:
                 "scores": self.scores[-6:], "force_next": force,
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
+                "up_next": self.up_next(),
             }
 
 
 def serve(director: Director) -> str:
-    page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds))
+    title = html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party DJ")
+    page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds)).replace("__TITLE__", title)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, code, body=b"", kind="text/html; charset=utf-8"):
@@ -426,11 +444,17 @@ def run(cfg, yt, plan, playlist_link: str | None, config_path: str):
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="strict-origin-when-cross-origin"><title>Party DJ</title>
+<meta name="referrer" content="strict-origin-when-cross-origin"><title>__TITLE__</title>
 <style>
  :root{--bg:#0d0d12;--card:#1b1b24;--pink:#ff2d7a;--txt:#f4f4f8;--dim:#a0a0b0}
  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--txt);text-align:center}
- main{max-width:860px;margin:auto;padding:16px}
+ main{max-width:1180px;margin:auto;padding:16px}
+ #ui:not([hidden]){display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+ #side{position:sticky;top:12px} #side .card{margin-top:0}
+ #nxtitle{font-size:22px;font-weight:700;margin-top:8px} #nxartist{color:var(--dim)}
+ @media (max-width:820px){#ui:not([hidden]){grid-template-columns:1fr} #side{position:static}}
+ #stop{background:#b71c1c} #mic.on{background:var(--pink);animation:pulse 1s infinite}
+ @keyframes pulse{50%{opacity:.6}}
  h1{margin:8px 0} .card{background:var(--card);border-radius:16px;padding:16px;margin:12px 0}
  #start{font-size:34px;padding:22px 60px;border-radius:20px;border:0;background:var(--pink);color:#fff;cursor:pointer;margin:30px}
  #title{font-size:28px;font-weight:700} #artist{color:var(--dim);font-size:18px}
@@ -451,11 +475,11 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #voice{color:var(--pink);min-height:22px;margin-top:8px}
 </style></head><body><main>
 <div id="toast"></div>
-<h1>🎧 Party DJ</h1>
+<h1>🎧 __TITLE__</h1>
 <div id="down">The DJ program isn't running. In Terminal run: <b>python dj.py</b></div>
 <button id="start">▶ START THE PARTY</button>
 <div id="players"><div id="p0"></div><div id="p1"></div></div>
-<div id="ui" hidden>
+<div id="ui" hidden><div id="left">
  <div class="card"><div id="phase" style="color:var(--dim)"></div>
   <div id="title">…</div><div id="artist"></div><div id="voice"></div><div id="bar"><div id="fill"></div></div></div>
  <div class="card"><b>Pick the vibe</b><div class="row" style="margin-top:10px">
@@ -466,13 +490,17 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <button class="mode" data-m="4" style="background:#fb8c00">🔥 Bangers</button>
   <button class="mode" data-m="5" style="background:#e53935">🚀 On fire</button></div></div>
  <div class="card row">
+  <button class="act" id="stop">⏹ Stop music</button>
   <button class="act" id="skip">⏭ Next song</button>
   <button class="act" id="hype">🎤 Hype the crowd</button>
   <button class="act" id="blk">🚫 Block this song</button>
   <button class="act" id="blka">🚫 Block this artist</button></div>
  <div class="card"><b>Request a song</b><div style="margin-top:10px">
+  <button class="act" id="mic" title="Say the song name">🎙 Speak</button>
   <input id="req" placeholder="Song name - Artist"> <button class="act" id="reqb">Add</button></div></div>
  <div class="card"><b>For you</b><div id="scores" style="color:var(--dim)"></div><ul id="notices"></ul></div>
+</div>
+<div id="side"><div class="card"><b>⏭ Up next</b><div id="nxtitle">…</div><div id="nxartist"></div></div></div>
 </div>
 <div id="overlay"><h2>📊 Vibe check! How's the crowd?</h2><div class="row">
  <button class="mode" style="background:#3949ab" onclick="score(1)">1<br><small>chill</small></button>
@@ -483,7 +511,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 </main>
 <script>
 const FADE = __FADE__, DUCK = 22, PREP = 25;
-let P = [null, null], ready = 0, active = 0, cur = null, upcoming = null, busy = false, fetching = false;
+let stopped = false, P = [null, null], ready = 0, active = 0, cur = null, upcoming = null, busy = false, fetching = false;
 const $ = id => document.getElementById(id);
 function toast(t){ const e=$('toast'); e.textContent=t; e.style.display='block'; clearTimeout(e.t); e.t=setTimeout(()=>e.style.display='none',2500); }
 async function post(path){ const r = await fetch(path,{method:'POST'}); if(!r.ok) throw 0; return r.json(); }
@@ -494,7 +522,7 @@ function playAudio(url, rate){ return new Promise(res=>{ const a=new Audio(url);
 async function talk(list, p){
   if(!list || !list.length) return;
   if(p) await ramp(p, 100, DUCK, 1);
-  for(const a of list){ $('voice').textContent='🎤 '+a.text; if(a.horn) await playAudio('/audio/horn.wav'); await playAudio(a.url, 1.08); }
+  for(const a of list){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url, 1.08); }
   $('voice').textContent=''; if(p) ramp(p, DUCK, 100, 1.5);
 }
 function onYouTubeIframeAPIReady(){
@@ -504,7 +532,7 @@ function onYouTubeIframeAPIReady(){
 }
 async function fetchNext(err){ fetching=true; try{ upcoming = await post('/next'+(err?'?v=error':'')); } finally { fetching=false; } }
 async function next(err){
-  if(busy) return; busy=true;
+  if(busy) return; busy=true; setStopped(false);
   try{
     if(err || !upcoming) await fetchNext(err);
     const t = upcoming; upcoming = null;
@@ -514,15 +542,16 @@ async function next(err){
     cur = t; active = ni; cur.until = t.start + t.play;
     P[ni].getIframe().style.zIndex = 2; if(old) P[1-ni].getIframe().style.zIndex = 1;
     $('title').textContent=t.title; $('artist').textContent=t.artist+'  ·  '+t.tier; $('fill').style.width='0';
+    load();
     const target = (t.announce && t.announce.length) ? DUCK : 100;
     const fades = [ramp(p, 0, target, err||!old ? 1.5 : FADE)];
     if(old) fades.push(ramp(old, 100, 0, FADE).then(()=>old.stopVideo()));
     await Promise.all(fades);
-    if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; if(a.horn) await playAudio('/audio/horn.wav'); await playAudio(a.url,1.08);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
+    if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url,1.08);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
   } catch(e){ console.log(e); } finally { busy=false; }
 }
 setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
-  if(!cur || busy) return; const p=P[active]; if(!p || !p.getCurrentTime) return;
+  if(!cur || busy || stopped) return; const p=P[active]; if(!p || !p.getCurrentTime) return;
   const t=p.getCurrentTime(), d=p.getDuration()||0, end=Math.min(cur.until, d ? d-0.5 : cur.until), left=end-t;
   if(d) $('fill').style.width=Math.min(100,100*(t-cur.start)/Math.max(1,end-cur.start))+'%';
   if(left < PREP && !upcoming && !fetching) fetchNext(false);
@@ -535,6 +564,8 @@ async function load(){
     $('phase').textContent = s.started ? (s.phase+(s.birthday?'  ·  🎂 birthday at '+s.birthday:'')) : '';
     $('scores').textContent = s.scores.length ? 'Vibe scores: '+s.scores.join(', ') : '';
     $('notices').innerHTML = s.notices.map(n=>'<li>'+n.replace(/</g,'&lt;')+'</li>').join('');
+    const n = upcoming && !upcoming.done ? upcoming : s.up_next;
+    $('nxtitle').textContent = n ? n.title : 'Nothing left to play'; $('nxartist').textContent = n ? n.artist+'  ·  '+n.tier : '';
     if(s.force_next && cur){ upcoming=null; next(false); }
   } catch(e){ $('down').style.display='block'; }
 }
@@ -545,6 +576,24 @@ $('start').onclick = async ()=>{
 };
 document.querySelectorAll('.mode[data-m]').forEach(b=>b.onclick=()=>post('/mode?v='+b.dataset.m).then(()=>{toast('Vibe: '+b.textContent.trim()); load();}).catch(()=>$('down').style.display='block'));
 window.score = n => post('/score?v='+n).then(()=>{toast('Vibe '+n+' saved ✓'); load();});
+function setStopped(v){ stopped=v; $('stop').textContent = v ? '▶ Play music' : '⏹ Stop music'; }
+$('stop').onclick = async ()=>{
+  if(!cur || busy) return; const p=P[active];
+  if(!stopped){ setStopped(true); await ramp(p, p.getVolume(), 0, 1.5); p.pauseVideo(); toast('Music stopped'); }
+  else { setStopped(false); p.playVideo(); ramp(p, 0, 100, 1.5); toast('Music back on'); }
+};
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+$('mic').onclick = ()=>{
+  if(!SR){ toast('The mic needs Google Chrome'); return; }
+  const r = new SR(); r.lang='en-IN'; r.interimResults=false; r.maxAlternatives=1;
+  const p = P[active], wasStopped = stopped;
+  $('mic').classList.add('on'); $('mic').textContent='🎙 Listening…';
+  if(p && cur && !stopped) p.setVolume(15);   // turn the music down so it can hear you
+  const done = ()=>{ $('mic').classList.remove('on'); $('mic').textContent='🎙 Speak'; if(p && cur && !wasStopped) ramp(p, 15, 100, 1); };
+  r.onresult = e=>{ const said = e.results[0][0].transcript.trim(); $('req').value = said; toast('Heard: '+said); setTimeout(()=>$('reqb').click(), 600); };
+  r.onerror = e=>{ toast(e.error==='not-allowed' ? 'Allow the microphone for this page, then try again' : "Didn't catch that, try again"); };
+  r.onend = done; r.start();
+};
 $('skip').onclick = ()=>{ upcoming=null; next(false); };
 $('hype').onclick = async ()=>{ const r = await post('/hype'); talk(r.announce, P[active]); };
 $('blk').onclick = async ()=>{ const r = await post('/block?v=song'); if(r.skip){ upcoming=null; next(false);} load(); };
