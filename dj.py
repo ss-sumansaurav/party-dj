@@ -117,7 +117,7 @@ def build_set(cfg, yt, songs_file: str):
     Song.crossfade = cfg.crossfade_seconds
     pool, birthday = load_pool(songs_file, cfg)
     print(f"Looking up {len(pool) + 1} songs on YouTube Music (cached after the first run)...")
-    missing = resolver.resolve_all(yt, pool + [birthday])
+    missing = resolver.resolve_all(yt, pool + [birthday] + ([birthday.before] if birthday.before else []))
     found = [s for s in pool if s.video_id]
     if not birthday.video_id:
         print(f"  Birthday song not found: {birthday.label()}. Edit birthday_song in {songs_file}.")

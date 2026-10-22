@@ -7,8 +7,9 @@ duration_minutes: 300          # 9 PM to 2 AM
 birthday_person_name: Ketan
 host_name: Poonam
 birthday_block_time: "00:00"   # midnight cake cutting; must fall inside the party
-birthday_song_start_seconds: 45  # Baar Baar Din Yeh Aaye starts at 0:45
-birthday_song_play_seconds: 90   # and plays for 90 seconds
+happy_birthday_play_seconds: 60  # at 12:00:00 sharp: Happy Birthday plays first, up to 60 s
+birthday_song_start_seconds: 60  # then Baar Baar Din Yeh Aaye, starting at 1:00
+birthday_song_play_seconds: 90   # and playing for 90 seconds
 
 language_ratio:
   hindi: 0.7                   # at least 70% Hindi

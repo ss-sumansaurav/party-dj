@@ -4,6 +4,7 @@
 #   energy: 1 mellow, 2 groove, 3 dance, 4 banger, 5 floor-filler
 # Hindi and Punjabi both count toward the Hindi share; en counts toward the English share.
 
+happy_birthday_song: ["Happy Birthday To You", "", en, 00s, 3]   # plays first, at 12:00:00
 birthday_song: ["Baar Baar Din Yeh Aaye", "Mohammed Rafi", hi, 60s, 3]
 
 songs:

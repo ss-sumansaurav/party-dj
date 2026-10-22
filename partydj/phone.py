@@ -72,7 +72,7 @@ def _start(files_dir: str):
     def progress(msg):  # msg is like "  looked up 40/138"
         _say("Finding songs on YouTube Music… " + msg.split()[-1].replace("/", " of "))
 
-    resolver.resolve_all(yt, pool + [birthday], progress=progress)
+    resolver.resolve_all(yt, pool + [birthday] + ([birthday.before] if birthday.before else []), progress=progress)
     found = [s for s in pool if s.video_id]
     plan = planner.build_plan(found, birthday, cfg)
     runsheet.timeline(plan, cfg)

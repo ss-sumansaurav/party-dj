@@ -38,6 +38,7 @@ class Song:
     explicit: bool = False
     full: bool = False  # play the whole song (the birthday song)
     karaoke: bool = False  # everyone sings it: the DJ calls it and the words show on screen
+    before: "Song | None" = None  # birthday song only: the Happy Birthday song that plays first
 
     # DJ mode plays only part of each song; set from config (song_play_min/max_seconds).
     play_cap = None
@@ -105,6 +106,9 @@ def load_pool(path: str | Path, cfg) -> tuple[list[Song], Song]:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     birthday = _song(raw["birthday_song"])
     birthday.full = True
+    if raw.get("happy_birthday_song"):
+        birthday.before = _song(raw["happy_birthday_song"])
+        birthday.before.full = True
     songs: dict[str, Song] = {}
     for row in raw.get("songs") or []:
         s = _song(row)

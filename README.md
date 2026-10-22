@@ -229,8 +229,11 @@ python dj.py
 25. **🎤 Karaoke:** plays one of the 10 karaoke songs straight away, from the top, with the
     words in big letters on the DJ page (and the next line under them). A request that was
     already lined up plays right after it.
-26. **Birthday song** at midnight starts at 0:45 and plays 90 seconds
-    (`birthday_song_start_seconds` / `birthday_song_play_seconds` in `config.yaml`).
+26. **Midnight, to the second** (the Mac's own clock): a minute before, the DJ asks for lights
+    down and cake out. "Three, two, one! Cut that cake!" ends at exactly 12:00:00, then
+    *Happy Birthday To You* plays (up to 60 s), then Baar Baar Din Yeh Aaye from 1:00 for 90 s.
+    Change them with `happy_birthday_song` in `songs.yaml` and `happy_birthday_play_seconds`,
+    `birthday_song_start_seconds`, `birthday_song_play_seconds` in `config.yaml`.
 
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the

@@ -153,7 +153,9 @@ class Director:
         self.notices: list[str] = []
         self.started: dt.datetime | None = None
         self.birthday_at: dt.datetime | None = None
-        self.birthday_state = "pending"    # pending -> due -> playing -> done
+        self.birthday_state = "pending"    # pending -> due -> hb (Happy Birthday) -> playing -> done
+        self.cake_audio: dict | None = None  # "3, 2, 1, cut the cake", made ahead so the page can time it
+        self.cake_said = False
         self.force_next = False
         self.current_reason: str | None = None
         self.request_log: dict[str, dict] = {}   # song key -> title, artist, names, first time
@@ -264,7 +266,9 @@ class Director:
     def choose(self) -> tuple[Song | None, str | None]:
         """What plays next (without changing anything), and why."""
         if self.birthday_state == "due":
-            return next((s.song for s in self.slots if s.song.full), None), "birthday"
+            return self.happy_birthday() or self.birthday_song(), "birthday"
+        if self.birthday_state == "hb":
+            return self.birthday_song(), "birthday"
         for cand, why in self.inserts:
             if self.playable(cand):
                 return cand, why
@@ -301,8 +305,20 @@ class Director:
         return {"title": song.title, "artist": song.lead_artist, "tier": tier}
 
     # ---------- the main decision ----------
-    def next_track(self, error: bool = False) -> dict:
+    def birthday_song(self) -> Song | None:
+        return next((s.song for s in self.slots if s.song.full), None)
+
+    def happy_birthday(self) -> Song | None:
+        b = self.birthday_song()
+        return b.before if b and b.before and b.before.video_id else None
+
+    def next_track(self, error: bool = False, birthday: bool = False) -> dict:
         with self.lock:
+            # The page's clock says it's 12:00:00 (it played "3, 2, 1, cut the cake" to end right now).
+            if birthday and self.birthday_state == "pending" and self.birthday_at \
+                    and dt.datetime.now() >= self.birthday_at - dt.timedelta(seconds=5):
+                self.birthday_state = "due"
+                self.cake_said = True
             if error and self.current:
                 self.notice(f"'{self.current.title}' won't play here, moving on.")
             announce: list = []
@@ -310,16 +326,22 @@ class Director:
             song = None
             names, to = [], ""
             if self.birthday_state == "due":
-                song = next((s.song for s in self.slots if s.song.full), None)
+                # 12:00:00. Happy Birthday first, then the birthday song.
+                song = self.happy_birthday() or self.birthday_song()
+                self.birthday_state = "hb" if song is not self.birthday_song() else "playing"
+                if not self.cake_said:  # the page didn't time it (old page, or it was busy): say it now
+                    self.cake_said = True
+                    a = self.cake_audio or self.speak("cake", self.fixed["cake"])
+                    announce += [a] if a else []
+                reason = "birthday"
+            elif self.birthday_state == "hb":
+                song = self.birthday_song()
                 self.birthday_state = "playing"
-                a = self.speak("birthday_intro", self.fixed["birthday_intro"])
-                announce += [a] if a else []
                 reason = "birthday"
             elif self.birthday_state == "playing":
                 self.birthday_state = "done"
-                for kind in ("cake", "shoutout"):
-                    a = self.speak(kind, self.fixed[kind])
-                    announce += [a] if a else []
+                a = self.speak("shoutout", self.fixed["shoutout"])
+                announce += [a] if a else []
                 self.since_announce = 0
             if song is None:
                 song, why = self.choose()
@@ -410,7 +432,10 @@ class Director:
                     start = int(hook[0] - 4)
             play, fade = cuts.best_play(song.full_length, start, cuts.lyric_text(self.yt, song.video_id),
                                         lo, hi, self.cfg.crossfade_seconds)
-            if reason == "birthday":  # Suman: start at 0:45, play 90 seconds
+            if reason == "birthday" and song is self.happy_birthday():
+                start, fade = 0, self.cfg.crossfade_seconds
+                play = min(song.full_length, self.cfg.happy_birthday_play_seconds)
+            elif reason == "birthday":  # Suman: start at 1:00, play 90 seconds
                 start = self.cfg.birthday_song_start_seconds
                 play, fade = self.cfg.birthday_song_play_seconds, self.cfg.crossfade_seconds
             return {
@@ -816,6 +841,15 @@ class Director:
         self.notice(f"🎤 Karaoke: '{song.title}' is coming up now.")
         return f"🎤 Karaoke: {song.title}" + ("" if with_words else " (no lyrics on YouTube Music for these, so just sing!)")
 
+    def requeue(self, video_id: str):
+        """A request the page had lined up gave way to the birthday: it plays right after."""
+        with self.lock:
+            for s in self.everything:
+                if s.video_id == video_id:
+                    self.played.discard(s.key)
+                    self.inserts.append((s, "request"))
+                    return
+
     def putback(self, video_id: str):
         """The page dropped a song it had lined up; let it play later."""
         with self.lock:
@@ -913,7 +947,13 @@ class Director:
                    and f"cake_{m}" not in self.countdown_said]
             for m in due:
                 self.countdown_said.add(f"cake_{m}")
-            if self.birthday_state == "pending" and self.birthday_at and now >= self.birthday_at:
+            intro = left is not None and left <= 60 and "intro" not in self.countdown_said
+            if intro:
+                self.countdown_said.add("intro")
+            make_cake = left is not None and left <= 150 and self.cake_audio is None
+            # Backup only: the DJ page starts the birthday on its own clock, to the second.
+            if self.birthday_state == "pending" and self.birthday_at \
+                    and now >= self.birthday_at + dt.timedelta(seconds=3):
                 self.birthday_state = "due"
                 self.force_next = True
                 self.notice("🎂 Birthday time! The DJ is starting the birthday song.")
@@ -923,6 +963,10 @@ class Director:
                 print("\a  📊 Vibe check! Tap a score on the DJ page.")
         for m in due:  # outside the lock: making the voice takes a moment
             self.say_now(f"cake_{m}", self.writer.line(f"cake_{m}"))
+        if make_cake:
+            self.cake_audio = self.speak("cake", self.fixed["cake"]) or {}
+        if intro:
+            self.say_now("birthday_intro", self.fixed["birthday_intro"])
 
     def begin(self):
         with self.lock:
@@ -943,6 +987,9 @@ class Director:
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
                 "up_next": self.up_next(), "queue": self.queue_view(), "guest_url": guest_url(),
                 "singalong": self.singalong, "say": self.say_queue, "birthday_in": self.birthday_in(),
+                "birthday_at_ms": int(self.birthday_at.timestamp() * 1000)
+                if self.birthday_in() is not None else None,
+                "cake_say": self.cake_audio or None,
                 "likes": len(self.likes.get(self.current.key, ())) if self.current else 0,
                 "wishes": self.wishes_view(("ok",)), "now": self.state_now(),
             }
@@ -1049,7 +1096,10 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 director.begin()
                 return self._json({"ok": True})
             if u.path == "/next":
-                return self._json(director.next_track(error=arg == "error"))
+                return self._json(director.next_track(error=arg == "error", birthday=arg == "birthday"))
+            if u.path == "/requeue":
+                director.requeue(arg)
+                return self._json({"ok": True})
             if u.path == "/karaoke":
                 return self._json({"msg": director.karaoke_now()})
             if u.path == "/hype":
@@ -1391,6 +1441,24 @@ function tickCountdown(){
   $('countdown').textContent = '🎂 Cake time in ' + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(sec).padStart(2,'0');
 }
 setInterval(tickCountdown, 1000);
+// Midnight, to the second: "3, 2, 1, cut the cake" ends exactly at 12:00:00, and Happy Birthday starts.
+let cake = null, bdayFired = false;
+setInterval(async ()=>{
+  if(bdayAt === null || bdayFired || !cur || stopped) return;
+  const left = bdayAt - Date.now();
+  if(cake && cake.dur && !cake.played && !SOUND.mute && left <= cake.dur*1000 + 200 && left > 0){
+    cake.played = true; const p = P[active]; if(p) ramp(p, p._v ?? 100, DUCK, 0.6);
+    $('voice').textContent = '🎤 '+cake.text; playAudio(cake.url).then(()=>{ $('voice').textContent=''; });
+  }
+  if(left <= 0){ bdayFired = true; birthdayNow(); }
+}, 100);
+async function birthdayNow(){
+  while(busy || fetching) await new Promise(r => setTimeout(r, 100));
+  if(upcoming){ post((upcoming.req ? '/requeue?v=' : '/putback?v=')+upcoming.vid);
+    if(upcoming.sing) post('/singalong?v='+upcoming.sing.id+'&ok=0'); }
+  fetching = true; try { upcoming = await post('/next?v=birthday'); } finally { fetching = false; }
+  next(false);
+}
 async function singAlong(sg, p){   // the crowd's on fire: music down, everybody sings the hook
   singing = true;
   try{
@@ -1425,7 +1493,10 @@ async function load(){
       $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
     if(s.force_next && cur) pendingForce = true;
     offerSing(s.singalong);
-    bdayAt = s.birthday_in === null ? null : Date.now() + s.birthday_in*1000; tickCountdown();
+    bdayAt = s.birthday_at_ms != null ? s.birthday_at_ms : s.birthday_in === null ? null : Date.now() + s.birthday_in*1000; tickCountdown();
+    if(s.cake_say && s.cake_say.url && (!cake || cake.url !== s.cake_say.url)){   // learn how long "3, 2, 1" takes
+      cake = {url: s.cake_say.url, text: s.cake_say.text, dur: 0, played: false};
+      const a = new Audio(s.cake_say.url); a.preload = 'auto'; a.onloadedmetadata = ()=>{ cake.dur = a.duration || 0; }; }
     $('reqby').textContent = s.now && s.now.who ? '🙋 Requested by '+s.now.who+(s.now.to ? ' · for '+s.now.to : '') : '';
     if(s.now && s.now.title === $('title').textContent) $('title').innerHTML = esc(s.now.title)+(s.likes ? '<span id="likes">👍 '+s.likes+'</span>' : '');
     $('wishes').innerHTML = s.wishes.length ? s.wishes.map(w => `<div class="wish">“${esc(w.text)}”<br><small>${esc(w.name)} · ${esc(w.at)}</small><br>
