@@ -11,7 +11,7 @@ MAX_WORDS = 32  # about 15 seconds of speech
 
 LINES = {
     "opening": [
-        "Yo Mumbai, what's good! Welcome to {name}'s birthday party. I'm your DJ tonight, and {host} said no holding back. So let's get this party started!",
+        "Yo NaAhAr, what's good! Welcome to {name}'s birthday party. I'm your DJ tonight, and {host} said no holding back. So let's get this party started!",
     ],
     "Warm-up": [
         "Alright alright, we're easing into it. Got a real classic for you. Sing it loud, this is {next}!",
@@ -34,7 +34,7 @@ LINES = {
     "Peak 2": [
         "You thought we were done? Not even close! Let's go, {next}!",
         "This party is on another level. Don't stop now, it's {next}!",
-        "Let me hear you, Mumbai! Everybody on the floor for {next}!",
+        "Let me hear you, Nahar Folks! Everybody on the floor for {next}!",
         "No slowing down tonight! Bring it back, {next}!",
     ],
     "Wind-down": [
@@ -43,7 +43,7 @@ LINES = {
         "Easy now, feel this one. It's {next}.",
     ],
     "vibe_up": [
-        "Hold up, hold up. I need more energy than that! Wake up, Mumbai, it's {next}!",
+        "Hold up, hold up. I need more energy than that! Wake up, Nahar Folks, it's {next}!",
         "Come on, I know you've got more! Let's turn it up, it's {next}!",
     ],
     "request": [
@@ -60,26 +60,30 @@ LINES = {
         "Dance floor's looking lonely! Grab a friend and get up here. This is {next}!",
         "No more standing around! Everybody to the dance floor, right now. It's {next}!",
     ],
+    "karaoke": [
+        "Karaoke time! Everybody, the words are on the screen. Sing it loud, this is {next}!",
+        "Nahar Folks, it's your turn to be the singer! Everybody sing along to {next}!",
+    ],
     "dedication": [
         "This one goes out to {to}, with love from {who}! It's {next}!",
         "Special dedication! From {who}, for {to}. Here's {next}!",
     ],
     "cake_10": [
         "Ten minutes to cake time for {name}! Get your phones ready and keep that energy up!",
-        "Heads up, Mumbai! Cake time for {name} in ten minutes!",
+        "Heads up, Nahar Folks! Cake time for {name} in ten minutes!",
     ],
     "cake_5": [
         "Five minutes to go! Everybody start making your way over, it's almost cake time for {name}!",
     ],
     "sing_along": [
-        "Mumbai, this one's yours! Everybody sing!",
+        "Nahar guys and gals, this one's yours! Everybody sing!",
         "I can't hear you! Sing it with me, everybody!",
         "Hands up and sing it loud! Let me hear you!",
     ],
     "hype": [
         "Make some noise for {name}! Louder! Let me hear you!",
         "Everybody, hands up! Give it up for {host}, what a party!",
-        "Mumbai, are you with me? Let me hear you scream!",
+        "Nahar guys and gals, are you with me? Let me hear you scream!",
     ],
     "birthday_intro": [
         "Alright everybody, can I get your attention? Lights down, cake out. It's {name}'s moment. Make some noise!",
@@ -91,7 +95,7 @@ LINES = {
         "Happy birthday {name}, you legend! Here's to an amazing year. And a huge shoutout to {host} for this incredible party!",
     ],
     "closing": [
-        "Mumbai, you were amazing tonight! Happy birthday once again, {name}. {host}, thank you for this party. Good night, everybody!",
+        "NAHAR guys and gals, you were amazing tonight! Happy birthday once again, {name}. {host}, thank you for this party. Good night, everybody!",
     ],
 }
 
@@ -99,7 +103,7 @@ LINES = {
 KIND_ENERGY = {"opening": 4, "Warm-up": 3, "Build": 4, "Peak": 5, "Peak 2": 5, "Wind-down": 2,
                "vibe_up": 5, "request": 4, "hype": 5, "birthday_intro": 4, "cake": 5,
                "shoutout": 4, "closing": 3, "guest_request": 4, "dance_floor": 5, "sing_along": 5,
-               "dedication": 4, "cake_10": 4, "cake_5": 5, "wish": 3}
+               "dedication": 4, "karaoke": 5, "cake_10": 4, "cake_5": 5, "wish": 3}
 
 
 # Hindi and Hinglish lines, spoken by the Hindi voice. English words stay in English letters.
@@ -107,7 +111,7 @@ LINES_HI = {
     "Warm-up": [
         "क्या बात है, क्या माहौल है! अब आ रहा है एक evergreen गाना, {next}!",
         "पुरानी यादें, नए vibes. ज़ोर से गाइए, ये है {next}!",
-        "Mumbai, आवाज़ ऊँची करो! चलो, {next}!",
+        "NAHAR WALO, आवाज़ ऊँची करो! चलो, {next}!",
     ],
     "Build": [
         "अरे वाह, dance floor गरम हो रहा है! रुकना नहीं है, ये है {next}!",
@@ -121,7 +125,7 @@ LINES_HI = {
     ],
     "Peak 2": [
         "पार्टी अभी ख़त्म नहीं हुई, दोस्तों! Let's go, {next}!",
-        "क्या बात है Mumbai! फिर से, सब floor पे, {next}!",
+        "क्या बात है NAHAR WALO! फिर से, सब floor पे, {next}!",
     ],
     "Wind-down": [
         "अब थोड़ा धीरे चलते हैं. किसी ख़ास के साथ, ये है {next}.",
@@ -141,6 +145,9 @@ LINES_HI = {
         "अरे, सब बैठे क्यों हो? चलो dance floor पे! ये है {next}!",
         "Dance floor खाली क्यों है? सब लोग आ जाओ! चलो, {next}!",
     ],
+    "karaoke": [
+        "Karaoke time! सब लोग मिलकर गाओ, ये है {next}!",
+    ],
     "dedication": [
         "ये गाना {to} के लिए, {who} की तरफ़ से, ढेर सारे प्यार के साथ! चलो, {next}!",
     ],
@@ -149,11 +156,11 @@ LINES_HI = {
     ],
     "sing_along": [
         "सब मिलकर गाओ! ज़ोर से!",
-        "Mumbai, आवाज़ ऊँची करो, सब साथ में गाओ!",
+        "NAHAR WALO, आवाज़ ऊँची करो, सब साथ में गाओ!",
     ],
     "hype": [
         "{name} के लिए ज़ोरदार तालियाँ! और ज़ोर से!",
-        "Mumbai, आवाज़ नहीं आई! और ज़ोर से!",
+        "NAHAR WALO, आवाज़ नहीं आई! और ज़ोर से!",
     ],
     "cake": [
         "तीन, दो, एक! केक काटो, {name}! सब मिलकर, happy birthday!",

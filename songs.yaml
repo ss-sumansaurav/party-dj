@@ -73,7 +73,7 @@ songs:
   - ["Ek Pal Ka Jeena", "Lucky Ali", hi, 2000s, 4]
   - ["Dil Chahta Hai", "Shankar Mahadevan", hi, 2000s, 3]
   - ["Woh Ladki Hai Kahan", "Shaan, Kavita Krishnamurthy", hi, 2000s, 3]
-  - ["Koi Kahe Kehta Rahe", "Shankar Mahadevan, Shaan, KK", hi, 2000s, 4]
+  - ["Koi Kahe Kehta Rahe", "Shankar Mahadevan, Shaan, KK", hi, 2000s, 4, karaoke]
   - ["It's The Time To Disco", "Shaan, KK, Vasundhara Das", hi, 2000s, 4]
   - ["Tumse Milke Dil Ka", "Sonu Nigam", hi, 2000s, 3]
   - ["Kajra Re", "Shankar Mahadevan, Alisha Chinai, Javed Ali", hi, 2000s, 5]
@@ -234,3 +234,6 @@ songs:
   - ["Jaaneman", "Don 3", hi, 2020s, 4]
   - ["Rani", "King", hi, 2020s, 4]
   - ["Alpha Title Track", "Alpha", hi, 2020s, 4]
+
+  # Karaoke: the DJ asks everyone to sing and the words show on the DJ page
+  - ["Pretty Woman", "Shankar Mahadevan, Ravi Khote", hi, 2000s, 4, karaoke]

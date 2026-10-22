@@ -97,7 +97,8 @@ def best_play(song_seconds: int, start: int, lines: list, lo: int, hi: int, fade
                 best, best_score = (round(play), f), score
     if best is not None:
         return best
-    return round(min(max(left * 0.55, lo), hi, left)), fade
+    # No timed lyrics: somewhere in the range, different for each song.
+    return round(min(lo + (song_seconds * 7 + start) % (hi - lo + 1), left)), fade
 
 
 def _key(text: str) -> str:

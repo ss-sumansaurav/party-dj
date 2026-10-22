@@ -37,6 +37,7 @@ class Song:
     seconds: int | None = None
     explicit: bool = False
     full: bool = False  # play the whole song (the birthday song)
+    karaoke: bool = False  # everyone sings it: the DJ calls it and the words show on screen
 
     # DJ mode plays only part of each song; set from config (song_play_min/max_seconds).
     play_cap = None
@@ -75,8 +76,9 @@ class Song:
 
 
 def _song(row) -> Song:
-    title, artist, lang, era, energy = row
-    return Song(str(title), str(artist), str(lang), str(era), int(energy))
+    title, artist, lang, era, energy = row[:5]
+    return Song(str(title), str(artist), str(lang), str(era), int(energy),
+                karaoke=len(row) > 5 and str(row[5]).lower() == "karaoke")
 
 
 def title_looks_explicit(title: str) -> bool:

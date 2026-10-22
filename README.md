@@ -138,7 +138,7 @@ python dj.py
 2. It plans the set, checks the playlist (it asks before creating one) and opens the
    **DJ page** in your browser (http://localhost:8765).
 3. Click **▶ START THE PARTY**. The DJ says hello and the music starts. Leave the page open.
-4. **DJ mixing:** each song plays for 40 to 70 seconds (`song_play_min_seconds` and `song_play_max_seconds`). The DJ picks the mix point at a pause
+4. **DJ mixing:** each song plays for 40 to 60 seconds (`song_play_min_seconds` and `song_play_max_seconds`). The DJ picks the mix point at a pause
    in the singing (from YouTube Music's timed lyrics), skipping a few
    seconds of long intros, then blends into the next song over `crossfade_seconds`.
    Now and then it mixes like a club DJ instead: when the energy climbs, a trance-style
@@ -218,6 +218,12 @@ python dj.py
 19. **📜 Party recap:** every song, who requested what, the crowd favourites and the wishes.
     Open it any time with the 📜 Party recap button; it's also saved as `party_recap.html` when
     you stop the DJ.
+
+20. **Karaoke songs** (marked `karaoke` at the end of their line in `songs.yaml`, like Koi Kahe
+    Kehta Rahe and Pretty Woman): the DJ asks everyone to sing, the song starts just before the
+    chorus and the words show on the DJ page line by line.
+21. **Themes:** Dark, Light or Party (top right of the DJ page); the page remembers your choice.
+22. Mixes are plain smooth blends: the scratch and build-up effects are switched off.
 
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the

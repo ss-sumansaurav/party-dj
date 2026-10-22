@@ -126,16 +126,6 @@ def log_mood(score: int, playing: str, decision: str):
         w.writerow([dt.datetime.now().isoformat(timespec="seconds"), score, playing, decision])
 
 
-def decide(scores: list[int]) -> str:
-    """The vibe rule: two lows in a row lifts the energy one tier; two highs holds it."""
-    last = scores[-2:]
-    if len(last) == 2 and all(s <= 2 for s in last):
-        return "up"
-    if len(last) == 2 and all(s >= 4 for s in last):
-        return "hold"
-    return "plan"
-
-
 def start_offset(song: Song) -> int:
     """Skip a little of the intro on longer songs, like a DJ mixing in."""
     if song.full or not song.seconds or song.seconds < 200:
@@ -353,6 +343,10 @@ class Director:
                 a = self.speak("opening", self.fixed["opening"])
                 announce += [a] if a else []
                 self.since_announce = 0
+            elif song.karaoke and not announce:
+                a = self.speak("karaoke", self.writer.line("karaoke", song.title))
+                announce += [a] if a else []
+                self.since_announce = 0
             elif reason == "guest" and not announce:
                 kind = "dedication" if to else "guest_request"
                 a = self.speak(kind, self.writer.line(kind, song.title, who=who(names), to=to))
@@ -400,6 +394,11 @@ class Director:
                 self.singalong_pending = False
                 sing = self.make_singalong(song)
             start = start_offset(song)
+            words = cuts.lyric_text(self.yt, song.video_id) if song.karaoke else []
+            if words:  # karaoke: start just before the hook, the part everyone knows
+                hook = cuts.chorus(words)[0]
+                if hook and hook[0] > 8:
+                    start = int(hook[0] - 4)
             play, fade = cuts.best_play(song.full_length, start, cuts.lyric_text(self.yt, song.video_id),
                                         self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds,
                                         self.cfg.crossfade_seconds)
@@ -408,6 +407,7 @@ class Director:
                 "tier": TIERS[song.energy], "start": start, "play": play, "fade": round(fade, 1),
                 "full": song.full, "announce": announce, "req": reason in ("guest", "request"),
                 "fx": self.pick_fx(prev, song, reason), "sing": sing,
+                "karaoke": [[round(a, 1), round(b, 1), w] for a, b, w in words if start <= b and a <= start + play],
             }
 
     # ---------- picking up after a crash ----------
@@ -551,15 +551,8 @@ class Director:
         return RECAP_FILE
 
     def pick_fx(self, prev: Song | None, song: Song, reason: str | None) -> str:
-        """How to mix into the next song. Mostly a smooth blend; now and then a trance-style
-        build-up and drop when the energy climbs, or a quick scratch between two bangers."""
-        if not self.fx or prev is None or prev.full or song.full or reason == "birthday":
-            return ""
-        r = self.rng.random()
-        if song.energy > prev.energy and song.energy >= 4 and r < 0.45:
-            return "riser"
-        if min(song.energy, prev.energy) >= 4 and r < 0.3:
-            return "scratch:" + self.rng.choice(self.fx)
+        """Effects over the mix. Suman asked for clean, smooth blends, so none for now
+        (the "riser" and "scratch:<file>" effects in partydj/fx.py are still supported)."""
         return ""
 
     def make_singalong(self, song: Song) -> dict:
@@ -637,19 +630,26 @@ class Director:
         with self.lock:
             self.scores.append(score)
             self.vibe_due = False
-            choice = decide(self.scores)
             cur = self.current
-            decision = {"up": "energy up one tier", "hold": "hold the energy", "plan": "keep the plan"}[choice]
+            # Every reading steers the next song: a quiet floor gets a banger to pull people
+            # up, a warming floor goes up a step, a dancing floor stays at that level.
+            choice = "up" if score <= 3 else "hold"
+            tier = None
+            if cur and score <= 2:
+                tier = max(4, cur.energy + 1)
+                self.dance_call_pending = True
+                self.notice(f"Crowd's quiet ({score}/5). Next song: {TIERS[min(5, tier)]} to get them up.")
+            elif cur and score == 3:
+                tier = cur.energy + 1
+                self.notice(f"Crowd's warming up (3/5). Next song goes up to {TIERS[min(5, tier)]}.")
+            elif cur:
+                tier = max(cur.energy, score)
+                self.notice(f"Crowd's {'on fire 🔥' if score == 5 else 'dancing'} ({score}/5). Keeping it at {TIERS[min(5, tier)]}.")
+            if tier:
+                self.one_shot_tier = min(5, tier)
+            decision = {"up": "energy up", "hold": "hold the energy"}[choice]
             if source == "camera":
                 decision += " (crowd camera)"
-            if choice == "up":
-                self.dance_call_pending = True
-            if choice == "up" and cur:
-                self.one_shot_tier = min(5, cur.energy + 1)
-                self.notice(f"Crowd's quiet. Next song goes up to {TIERS[self.one_shot_tier]}.")
-            elif choice == "hold" and cur:
-                self.one_shot_tier = cur.energy
-                self.notice("Crowd's on fire 🔥 Holding the energy.")
             fire = score >= 5 and cur is not None and not cur.full and self.singalong is None \
                 and not self.singalong_pending and time.monotonic() - self.last_singalong > SINGALONG_GAP
             if fire:
@@ -1163,10 +1163,20 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #netdown{display:none;background:#e65100;padding:12px;border-radius:12px;margin:8px 0;font-size:18px}
  .wish{border-bottom:1px solid #2a2a35;padding:8px 0} .wish small{color:var(--dim)}
  .wish button{font-size:14px;padding:6px 10px;border-radius:8px;border:0;color:#fff;margin:6px 6px 0 0;cursor:pointer}
+ #themes{text-align:right;font-size:14px;color:var(--dim)} #themes button{font-size:14px;padding:6px 12px;margin-left:6px;border-radius:20px;border:1px solid var(--dim);background:transparent;color:var(--txt);cursor:pointer}
+ #themes button.on{background:var(--pink);border-color:var(--pink);color:#fff}
+ body.light{--bg:#f4f4f7;--card:#ffffff;--txt:#16161d;--dim:#5f5f6e;--pink:#e0145f}
+ body.light #countdown,body.light #sing{color:#b45f00} body.light #sing div{color:var(--txt)}
+ body.light .card{box-shadow:0 2px 10px rgba(0,0,0,.08)} body.light li{border-color:#e4e4ea} body.light #bar{background:#ddd}
+ body.party{--card:rgba(20,10,40,.72);--pink:#ff3df2;--dim:#d0c4ff;background:linear-gradient(120deg,#2b0057,#7a0060,#00315c,#3d005c);background-size:400% 400%;animation:disco 14s ease infinite}
+ body.party .card{border:1px solid rgba(255,61,242,.35);box-shadow:0 0 22px rgba(255,61,242,.25);backdrop-filter:blur(6px)}
+ body.party h1{text-shadow:0 0 18px #ff3df2,0 0 36px #00e5ff}
+ @keyframes disco{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
  .snd{display:block;margin-top:10px;color:var(--dim);font-size:14px} .snd span{float:right;color:var(--txt)}
  .snd input{width:100%;padding:0;accent-color:var(--pink)}
 </style></head><body><main>
 <div id="toast"></div>
+<div id="themes"><span>Theme:</span> <button data-t="dark">🌙 Dark</button><button data-t="light">☀️ Light</button><button data-t="party">🪩 Party</button></div>
 <h1>🎧 __TITLE__</h1>
 <div style="margin-bottom:8px"><a href="/songs" id="songslink" style="color:var(--pink);font-size:18px">🎵 See, add or remove party songs</a> <small style="color:var(--dim)">(the music keeps playing)</small></div>
 <div id="songsbox" style="position:fixed;inset:0;background:var(--bg);z-index:50;display:none;flex-direction:column">
@@ -1268,6 +1278,7 @@ async function next(err){
     const old = cur ? P[active] : null, ni = cur ? 1-active : active, p = P[ni];
     p.setVolume(0); p.loadVideoById({videoId:t.vid, startSeconds:t.start});
     cur = t; active = ni; cur.until = t.start + t.play;
+    if(!singing) $('sing').style.display = 'none';
     P[ni].getIframe().style.zIndex = 2; if(old) P[1-ni].getIframe().style.zIndex = 1;
     $('title').textContent=t.title; $('artist').textContent=t.artist+'  ·  '+t.tier; $('fill').style.width='0';
     load();
@@ -1317,6 +1328,10 @@ setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
   else if(Date.now() - lastMove > 15000 && !down){   // stuck for 15 s: move on
     lastMove = Date.now(); if(navigator.onLine){ toast('That song got stuck, moving on'); next(true); } else netDown(true); return; }
   if(sayQ.length && !talking && !singing){ talking = true; const list = sayQ.splice(0); talk(list, p).finally(()=>{ talking = false; }); }
+  if(cur.karaoke && cur.karaoke.length){   // karaoke: show the line being sung
+    const ln = cur.karaoke.find(l => t >= l[0] - 0.3 && t <= l[1] + 0.3);
+    $('sing').style.display = 'block'; $('sing').innerHTML = '🎤 Sing along!<div>'+(ln ? esc(ln[2]) : '♪ ♪ ♪')+'</div>';
+  }
   if(singing || talking) return;
   const sg = cur.sing;   // a sing-along drop is waiting: find the hook, then drop the music
   if(sg && t >= cur.start){
@@ -1398,6 +1413,11 @@ function applySound(){
 }
 for(const k of ['music','voice','duck']){ const el = $('s'+k); el.value = SOUND[k]; el.oninput = ()=>{ SOUND[k] = +el.value; applySound(); }; }
 applySound();
+function setTheme(t){ document.body.className = t === 'dark' ? '' : t;
+  document.querySelectorAll('#themes button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  try { localStorage.setItem('dj-theme', t); } catch(e){} }
+document.querySelectorAll('#themes button').forEach(b => b.onclick = () => setTheme(b.dataset.t));
+setTheme((()=>{ try { return localStorage.getItem('dj-theme') || 'dark'; } catch(e){ return 'dark'; } })());
 $('start').onclick = async ()=>{
   if(ready<2){ toast('Loading the player, one moment…'); return; }
   await post('/start'); $('start').remove(); $('ui').hidden=false; next(false);
@@ -1432,19 +1452,24 @@ $('mic').onclick = ()=>{
   r.onend = done; r.start();
 };
 // Crowd camera: compares tiny grey frames to measure movement. Nothing leaves this page.
-const CAM_EVERY = 120, CAM_LEVELS = [1.5, 3, 5, 8], CAM_NAMES = ['','Quiet','Swaying','Grooving','Dancing','Going wild'];
+const CAM_EVERY = 60, CAM_LEVELS = [3, 6, 11, 18], CAM_NAMES = ['','Quiet','Swaying','Grooving','Dancing','Going wild'];
 let cam = null, camPrev = null, camHist = [], camTimer = null, camSend = null;
 const camCanvas = document.createElement('canvas'); camCanvas.width = 64; camCanvas.height = 48;
 const camCtx = camCanvas.getContext('2d', {willReadFrequently: true});
 const camScore = m => 1 + CAM_LEVELS.filter(t => m >= t).length;
 function camTick(){
   camCtx.drawImage($('camv'), 0, 0, 64, 48);
-  const px = camCtx.getImageData(0, 0, 64, 48).data, g = new Float32Array(64*48);
-  for(let i=0;i<g.length;i++) g[i] = (px[4*i]+px[4*i+1]+px[4*i+2])/3;
-  if(camPrev){ let d=0; for(let i=0;i<g.length;i++) d += Math.abs(g[i]-camPrev[i]); camHist.push(d/g.length); }
+  // 32x24 grey frame (averaging 2x2 blocks smooths out camera grain), minus its overall
+  // brightness so lights dimming or the camera adjusting don't count as movement.
+  const px = camCtx.getImageData(0, 0, 64, 48).data, g = new Float32Array(32*24);
+  for(let y=0;y<48;y++) for(let x=0;x<64;x++){ const i=4*(y*64+x); g[(y>>1)*32+(x>>1)] += (px[i]+px[i+1]+px[i+2])/12; }
+  let mean = 0; for(let i=0;i<g.length;i++) mean += g[i]; mean /= g.length;
+  for(let i=0;i<g.length;i++) g[i] -= mean;
+  // Movement = the share of the picture that really changed (small flickers are ignored).
+  if(camPrev){ let moved=0; for(let i=0;i<g.length;i++) if(Math.abs(g[i]-camPrev[i]) > 14) moved++; camHist.push(100*moved/g.length); }
   camPrev = g; if(camHist.length > CAM_EVERY*2) camHist.shift();
   const recent = camHist.slice(-20), m = recent.reduce((a,b)=>a+b,0)/Math.max(1,recent.length), sc = camScore(m);
-  $('camfill').style.width = Math.min(100, m/10*100)+'%'; $('camlabel').textContent = 'Right now: '+CAM_NAMES[sc]+' ('+sc+'/5)';
+  $('camfill').style.width = Math.min(100, m/25*100)+'%'; $('camlabel').textContent = 'Right now: '+CAM_NAMES[sc]+' ('+sc+'/5)';
 }
 async function camOn(){
   try { cam = await navigator.mediaDevices.getUserMedia({video:{width:320,height:240}, audio:false}); }
