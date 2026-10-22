@@ -284,7 +284,20 @@ class Director:
             if song:
                 up = self.current and self.one_shot_tier > self.current.energy
                 return song, "boost" if up else "hold"
-        return (self.pick_by_tier(self.mode) if self.mode != "auto" else self.pick_auto()), None
+        song = self.pick_by_tier(self.mode) if self.mode != "auto" else self.pick_auto()
+        return song or self.encore(), None
+
+    def encore(self) -> Song | None:
+        """Every song has played: rather than going quiet, bring back the night's favourites
+        (most 👍, then requested), never one of the last 40."""
+        recent = {h["key"] for h in self.history[-40:]}
+        liked = {h["key"]: h.get("likes", 0) for h in self.history}
+        asked = set(self.request_log)
+        pool = [s for s in self.everything if s.video_id and not s.full and s.key not in recent
+                and s.energy >= 3 and not is_blocked(s, *self.blocked)]
+        if not pool:
+            return None
+        return max(pool, key=lambda s: (liked.get(s.key, 0), s.key in asked, s.energy, -pool.index(s)))
 
     def up_next(self) -> dict | None:
         with self.lock:
@@ -387,12 +400,12 @@ class Director:
                 self.singalong_pending = False
                 sing = self.make_singalong(song)
             start = start_offset(song)
-            play = cuts.best_play(song.full_length, start, cuts.lyric_lines(self.yt, song.video_id),
-                                  self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds,
-                                  self.cfg.crossfade_seconds)
+            play, fade = cuts.best_play(song.full_length, start, cuts.lyric_text(self.yt, song.video_id),
+                                        self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds,
+                                        self.cfg.crossfade_seconds)
             return {
                 "vid": song.video_id, "title": song.title, "artist": song.lead_artist,
-                "tier": TIERS[song.energy], "start": start, "play": play,
+                "tier": TIERS[song.energy], "start": start, "play": play, "fade": round(fade, 1),
                 "full": song.full, "announce": announce, "req": reason in ("guest", "request"),
                 "fx": self.pick_fx(prev, song, reason), "sing": sing,
             }
@@ -1251,6 +1264,7 @@ async function next(err){
     if(err || !upcoming) await fetchNext(err);
     const t = upcoming; upcoming = null;
     if(!t || t.done){ $('title').textContent='That was the last song!'; busy=false; return; }
+    const OF = (cur && cur.fade) || FADE;   // the old song's fade fits its pause in the singing
     const old = cur ? P[active] : null, ni = cur ? 1-active : active, p = P[ni];
     p.setVolume(0); p.loadVideoById({videoId:t.vid, startSeconds:t.start});
     cur = t; active = ni; cur.until = t.start + t.play;
@@ -1269,8 +1283,8 @@ async function next(err){
       fxAudio(fxk.slice(8)); await ramp(old, old._v ?? 100, 0, 0.7); old.stopVideo();
       await ramp(p, 0, target, 1);
     } else {
-      const fades = [ramp(p, 0, target, err||!old ? 1.5 : FADE)];
-      if(old) fades.push(ramp(old, old._v ?? 100, 0, FADE).then(()=>old.stopVideo()));
+      const fades = [ramp(p, 0, target, err||!old ? 1.5 : OF)];
+      if(old) fades.push(ramp(old, old._v ?? 100, 0, OF).then(()=>old.stopVideo()));
       await Promise.all(fades);
     }
     if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
@@ -1314,7 +1328,8 @@ setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
   }
   if(pendingForce){ pendingForce = false; forceNow(); return; }
   if(left < PREP && !upcoming && !fetching) fetchNext(false);
-  if(left < FADE && upcoming) next(false);
+  const mixAt = (cur.fade || FADE) + (upcoming && upcoming.fx === 'riser' ? 2.5 : 0);
+  if(left < mixAt && upcoming) next(false);
 }, 300);
 let singing = false, seenSing = 0, talking = false, sayQ = [], lastSay = 0, sayReady = false, bdayAt = null;
 window.wish = (id, ok) => post('/wish?v='+id+'&ok='+ok).then(()=>{ toast("That wish won't be read out"); load(); });

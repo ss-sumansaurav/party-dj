@@ -73,23 +73,32 @@ def chorus(lines: list[tuple[float, float, str]]) -> tuple[list[float], str]:
     return count[key], words[key]
 
 
-def best_play(song_seconds: int, start: int, lines: list[tuple[float, float]],
-              lo: int, hi: int, fade: int) -> int:
-    """Seconds to play from `start`. The crossfade begins `fade` seconds before the end."""
+def best_play(song_seconds: int, start: int, lines: list, lo: int, hi: int, fade: int) -> tuple[int, float]:
+    """(seconds to play from `start`, crossfade seconds). The fade starts as the singer finishes
+    a line and is over before the next line begins, so a mix never cuts into the singing. The
+    best spot is the end of the hook (the chorus line, when the next line moves on), else the
+    longest pause in the vocals."""
     left = song_seconds - start
     if left <= lo:
-        return max(30, left)
-    best, best_score = None, -1.0
-    ends = [(a[1], b[0] - a[1]) for a, b in zip(lines, lines[1:])]
+        return max(30, left), fade
+    words = [(x[2] if len(x) > 2 else "") for x in lines]
+    hook = _key(chorus([(x[0], x[1], w) for x, w in zip(lines, words)])[1])
+    ends = [(a[1], b[0] - a[1], _key(wa) == hook != _key(wb)) for a, b, wa, wb
+            in zip(lines, lines[1:], words, words[1:])]
     if lines:
-        ends.append((lines[-1][1], song_seconds - lines[-1][1]))  # after the last line
-    for end, gap in ends:
-        play = end - start + fade  # the fade starts as the singer finishes the line
-        if lo <= play <= min(hi, left) and gap >= 1.0:
-            # Longer pauses mix better; a pause that covers the whole fade is ideal.
-            score = min(gap, 8) + (3 if gap >= fade else 0) + play / 100
+        ends.append((lines[-1][1], song_seconds - lines[-1][1], False))  # after the last line
+    best, best_score = None, -1.0
+    for end, gap, after_hook in ends:
+        f = min(fade, max(1.5, gap - 0.2))  # finish the fade inside the pause
+        play = end - start + f
+        if lo <= play <= min(hi, left) and gap >= 0.8:
+            score = min(gap, 8) + (3 if gap >= fade else 0) + (5 if hook and after_hook and gap >= 1.5 else 0) + play / 100
             if score > best_score:
-                best, best_score = play, score
+                best, best_score = (round(play), f), score
     if best is not None:
-        return round(best)
-    return round(min(max(left * 0.55, lo), hi, left))
+        return best
+    return round(min(max(left * 0.55, lo), hi, left)), fade
+
+
+def _key(text: str) -> str:
+    return "".join(c for c in text.lower() if c.isalnum())
