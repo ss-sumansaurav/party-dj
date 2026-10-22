@@ -56,7 +56,7 @@ songs:
   - ["Yeh Kaali Kaali Aankhen", "Kumar Sanu", hi, 90s, 3]
   - ["Mehndi Laga Ke Rakhna", "Lata Mangeshkar, Udit Narayan", hi, 90s, 3]
   - ["Le Gayi", "Asha Bhosle", hi, 90s, 4]
-  - ["Chaiyya Chaiyya", "Sukhwinder Singh, Sapna Awasthi", hi, 90s, 4]
+  - ["Chaiyya Chaiyya", "Sukhwinder Singh, Sapna Awasthi", hi, 90s, 4, karaoke]
   - ["Koi Mil Gaya", "Udit Narayan, Alka Yagnik, Kavita Krishnamurthy", hi, 90s, 4]
   - ["Aati Kya Khandala", "Aamir Khan, Alka Yagnik", hi, 90s, 3]
   - ["Mundian To Bach Ke", "Panjabi MC", pa, 90s, 5]
@@ -68,7 +68,7 @@ songs:
 
   # 2000s and later bangers
   - ["Yeh Ladka Hai Allah", "Udit Narayan, Alka Yagnik", hi, 2000s, 4]
-  - ["Bole Chudiyan", "Amitabh Bachchan, Kavita Krishnamurthy, Sonu Nigam, Alka Yagnik, Udit Narayan", hi, 2000s, 4]
+  - ["Bole Chudiyan", "Amitabh Bachchan, Kavita Krishnamurthy, Sonu Nigam, Alka Yagnik, Udit Narayan", hi, 2000s, 4, karaoke]
   - ["Say Shava Shava", "Sunidhi Chauhan, Udit Narayan, Sudesh Bhonsle", hi, 2000s, 5]
   - ["Ek Pal Ka Jeena", "Lucky Ali", hi, 2000s, 4]
   - ["Dil Chahta Hai", "Shankar Mahadevan", hi, 2000s, 3]
@@ -76,7 +76,7 @@ songs:
   - ["Koi Kahe Kehta Rahe", "Shankar Mahadevan, Shaan, KK", hi, 2000s, 4, karaoke]
   - ["It's The Time To Disco", "Shaan, KK, Vasundhara Das", hi, 2000s, 4]
   - ["Tumse Milke Dil Ka", "Sonu Nigam", hi, 2000s, 3]
-  - ["Kajra Re", "Shankar Mahadevan, Alisha Chinai, Javed Ali", hi, 2000s, 5]
+  - ["Kajra Re", "Shankar Mahadevan, Alisha Chinai, Javed Ali", hi, 2000s, 5, karaoke]
   - ["Dus Bahane", "KK, Shaan", hi, 2000s, 4]
   - ["Dhoom Machale", "Sunidhi Chauhan", hi, 2000s, 5]
   - ["Dhoom Again", "Vishal Dadlani, Dominique Cerejo", hi, 2000s, 5]
@@ -84,10 +84,10 @@ songs:
   - ["Desi Girl", "Shankar Mahadevan, Sunidhi Chauhan, Vishal Dadlani", hi, 2000s, 5]
   - ["Twist", "Neeraj Shridhar", hi, 2000s, 5]
   - ["Sadi Gali", "Lehmber Hussainpuri", pa, 2010s, 4]
-  - ["Badtameez Dil", "Benny Dayal", hi, 2010s, 5]
+  - ["Badtameez Dil", "Benny Dayal", hi, 2010s, 5, karaoke]
   - ["Nagada Sang Dhol", "Shreya Ghoshal, Osman Mir", hi, 2010s, 5]
   - ["London Thumakda", "Labh Janjua, Sonu Kakkar, Neha Kakkar", hi, 2010s, 5]
-  - ["Gallan Goodiyaan", "Shankar Mahadevan, Yashita Sharma", hi, 2010s, 5]
+  - ["Gallan Goodiyaan", "Shankar Mahadevan, Yashita Sharma", hi, 2010s, 5, karaoke]
   - ["Kala Chashma", "Amar Arshi, Badshah, Neha Kakkar", pa, 2010s, 5]
 
   # English and other non-Hindi
@@ -162,7 +162,7 @@ songs:
   - ["What Jhumka?", "Arijit Singh, Jonita Gandhi", hi, 2020s, 4]
   - ["Gaddi Jaandi Ae Chalaangaan Maardi", "Daler Mehndi", pa, 90s, 3]
   - ["Dil Dhadakne Do", "Shankar Mahadevan, Farhan Akhtar", hi, 2010s, 3]
-  - ["Senorita", "Farhan Akhtar, Hrithik Roshan, Abhay Deol", hi, 2010s, 3]
+  - ["Senorita", "Farhan Akhtar, Hrithik Roshan, Abhay Deol", hi, 2010s, 3, karaoke]
   - ["Ilahi", "Arijit Singh", hi, 2010s, 3]
   - ["Kudi Nu Nachne De", "Vishal Dadlani, Sachin-Jigar", hi, 2020s, 4]
   - ["Hookah Bar", "Himesh Reshammiya, Vineet Singh", hi, 2010s, 5]
@@ -187,9 +187,9 @@ songs:
   - ["Aap Ke Aa Jane Se", "Mohammed Aziz, Sadhana Sargam", hi, 80s, 4]
 
   # Bollywood party hits 2015-2026 (Suman's picks)
-  - ["Sooraj Dooba Hain", "Arijit Singh, Aditi Singh Sharma", hi, 2010s, 4]
+  - ["Sooraj Dooba Hain", "Arijit Singh, Aditi Singh Sharma", hi, 2010s, 4, karaoke]
   - ["Chittiyaan Kalaiyaan", "Meet Bros Anjjan, Kanika Kapoor", hi, 2010s, 4]
-  - ["Matargashti", "Mohit Chauhan", hi, 2010s, 4]
+  - ["Matargashti", "Mohit Chauhan", hi, 2010s, 4, karaoke]
   - ["Gerua", "Arijit Singh, Antara Mitra", hi, 2010s, 3]
   - ["Deewani Mastani", "Shreya Ghoshal", hi, 2010s, 3]
   - ["Baby Ko Bass Pasand Hai", "Vishal Dadlani, Badshah, Shalmali Kholgade", hi, 2010s, 5]

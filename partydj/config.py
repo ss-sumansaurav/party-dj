@@ -34,6 +34,8 @@ class Config:
     song_play_min_seconds: int = 90
     song_play_max_seconds: int = 150
     crossfade_seconds: int = 6
+    birthday_song_start_seconds: int = 45
+    birthday_song_play_seconds: int = 90
 
     @property
     def start(self) -> dt.datetime:
@@ -107,6 +109,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         song_play_min_seconds=int(raw.get("song_play_min_seconds", 90)),
         song_play_max_seconds=int(raw.get("song_play_max_seconds", 150)),
         crossfade_seconds=int(raw.get("crossfade_seconds", 6)),
+        birthday_song_start_seconds=int(raw.get("birthday_song_start_seconds", 45)),
+        birthday_song_play_seconds=int(raw.get("birthday_song_play_seconds", 90)),
     )
 
     if not 30 <= cfg.duration_minutes <= 600:

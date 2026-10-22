@@ -35,6 +35,7 @@ TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
 GUEST_PORT = 8766          # request page only, for the public link
 PUBLIC = {"url": None}     # the public link, once it's open
 TV_PATHS = ("/tv", "/api/tv", "/qr.svg")  # the big screen can be a TV on the Wi-Fi
+REQUEST_MIN_SECONDS = 150     # requested and karaoke songs play at least this long
 DANCE_CALL_GAP = 20 * 60       # seconds between "come to the dance floor" call-outs
 SINGALONG_GAP = 15 * 60       # at most one sing-along drop every 15 minutes
 STATE_FILE = Path(".cache/party_state.json")  # where the party is up to, for picking up after a crash
@@ -167,6 +168,7 @@ class Director:
         self.last_singalong = -SINGALONG_GAP
         self.n_sing = 0
         self._search_yt = None                # signed-out client just for guest searches
+        self.last_karaoke = -3600.0
         self.history: list[dict] = []         # every song played tonight, for the recap
         self.wishes: list[dict] = []          # guests' birthday wishes; the host approves each one
         self.say_queue: list[dict] = []       # lines to say straight away (countdown)
@@ -324,7 +326,7 @@ class Director:
                 reason = reason or why
                 while self.inserts and not self.playable(self.inserts[0][0]):
                     self.inserts.pop(0)
-                if why == "request":
+                if why in ("request", "karaoke"):
                     self.inserts.pop(0)
                 elif why == "guest":
                     r = self.guest_reqs.pop(song.key)
@@ -343,7 +345,11 @@ class Director:
                 a = self.speak("opening", self.fixed["opening"])
                 announce += [a] if a else []
                 self.since_announce = 0
-            elif song.karaoke and not announce:
+            # Karaoke: when you press the button, or a karaoke song comes up (at most every 30 min).
+            kara = reason == "karaoke" or (song.karaoke and time.monotonic() - self.last_karaoke > 1800)
+            if kara:
+                self.last_karaoke = time.monotonic()
+            if self.opened and kara and not announce:
                 a = self.speak("karaoke", self.writer.line("karaoke", song.title))
                 announce += [a] if a else []
                 self.since_announce = 0
@@ -394,18 +400,23 @@ class Director:
                 self.singalong_pending = False
                 sing = self.make_singalong(song)
             start = start_offset(song)
-            words = cuts.lyric_text(self.yt, song.video_id) if song.karaoke else []
-            if words:  # karaoke: start just before the hook, the part everyone knows
+            words = cuts.lyric_text(self.yt, song.video_id) if kara else []
+            lo, hi = self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds
+            if reason in ("guest", "request", "karaoke"):  # requests get a proper play
+                lo, hi = max(lo, REQUEST_MIN_SECONDS), max(hi, REQUEST_MIN_SECONDS + 30)
+            if words and reason != "karaoke":  # start just before the hook, the part everyone knows
                 hook = cuts.chorus(words)[0]
                 if hook and hook[0] > 8:
                     start = int(hook[0] - 4)
             play, fade = cuts.best_play(song.full_length, start, cuts.lyric_text(self.yt, song.video_id),
-                                        self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds,
-                                        self.cfg.crossfade_seconds)
+                                        lo, hi, self.cfg.crossfade_seconds)
+            if reason == "birthday":  # Suman: start at 0:45, play 90 seconds
+                start = self.cfg.birthday_song_start_seconds
+                play, fade = self.cfg.birthday_song_play_seconds, self.cfg.crossfade_seconds
             return {
                 "vid": song.video_id, "title": song.title, "artist": song.lead_artist,
                 "tier": TIERS[song.energy], "start": start, "play": play, "fade": round(fade, 1),
-                "full": song.full, "announce": announce, "req": reason in ("guest", "request"),
+                "full": song.full, "announce": announce, "req": reason in ("guest", "request", "karaoke"),
                 "fx": self.pick_fx(prev, song, reason), "sing": sing,
                 "karaoke": [[round(a, 1), round(b, 1), w] for a, b, w in words if start <= b and a <= start + play],
             }
@@ -784,10 +795,26 @@ class Director:
         """Mix into the request straight away, unless a request or the birthday song is playing."""
         with self.lock:
             cur = self.current
-            if not self.started or not cur or cur.full or self.current_reason in ("guest", "request", "birthday"):
+            if not self.started or not cur or cur.full or self.current_reason in ("guest", "request", "birthday", "karaoke"):
                 return False
             self.force_next = True
             return True
+
+    def karaoke_now(self) -> str:
+        """The karaoke button: one of the karaoke songs, straight away, with the words on screen."""
+        with self.lock:
+            cands = [s for s in self.everything if s.karaoke and s.video_id
+                     and not is_blocked(s, *self.blocked) and (not self.current or s.key != self.current.key)]
+            fresh = [s for s in cands if s.key not in self.played] or cands
+        if not fresh:
+            return "There are no karaoke songs on the list."
+        with_words = [s for s in fresh if cuts.lyric_text(self.yt, s.video_id)]
+        song = self.rng.choice(with_words or fresh)
+        with self.lock:
+            self.played.discard(song.key)
+            self.inserts.insert(0, (song, "karaoke"))
+        self.notice(f"🎤 Karaoke: '{song.title}' is coming up now.")
+        return f"🎤 Karaoke: {song.title}" + ("" if with_words else " (no lyrics on YouTube Music for these, so just sing!)")
 
     def putback(self, video_id: str):
         """The page dropped a song it had lined up; let it play later."""
@@ -1023,6 +1050,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return self._json({"ok": True})
             if u.path == "/next":
                 return self._json(director.next_track(error=arg == "error"))
+            if u.path == "/karaoke":
+                return self._json({"msg": director.karaoke_now()})
             if u.path == "/hype":
                 return self._json({"announce": director.hype_now()})
             if u.path == "/mode":
@@ -1157,6 +1186,8 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #voice{color:var(--pink);min-height:22px;margin-top:8px}
  #sing{display:none;font-size:30px;font-weight:800;color:#ffd54f;margin:10px 0;animation:pulse .6s infinite alternate}
  #sing div{font-size:22px;color:var(--txt);font-weight:600}
+ #sing.kara{animation:none;font-size:22px} #sing.kara div{font-size:36px;margin:8px 0;line-height:1.25}
+ #sing.kara small{display:block;font-size:20px;color:var(--dim);font-weight:500}
  @keyframes pulse{to{transform:scale(1.06)}}
  #countdown{font-size:22px;font-weight:800;color:#ffd54f;min-height:0} #reqby{color:#7cdb7c;margin-top:4px}
  #likes{display:inline-block;margin-left:8px;color:#ffd54f}
@@ -1208,6 +1239,8 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <button class="act" id="stop">⏹ Stop music</button>
   <button class="act" id="mute">🔇 DJ voice off</button>
   <button class="act" id="skip">⏭ Next song</button>
+  <button class="act" id="fullbtn">🎵 Play full song</button>
+  <button class="act" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button>
   <button class="act" id="hype">🎤 Hype the crowd</button>
   <button class="act" id="blk">🚫 Block this song</button>
   <button class="act" id="blka">🚫 Block this artist</button>
@@ -1278,7 +1311,8 @@ async function next(err){
     const old = cur ? P[active] : null, ni = cur ? 1-active : active, p = P[ni];
     p.setVolume(0); p.loadVideoById({videoId:t.vid, startSeconds:t.start});
     cur = t; active = ni; cur.until = t.start + t.play;
-    if(!singing) $('sing').style.display = 'none';
+    if(!singing){ $('sing').style.display = 'none'; $('sing').className = ''; }
+    $('fullbtn').textContent = '🎵 Play full song'; $('fullbtn').style.background = '';
     P[ni].getIframe().style.zIndex = 2; if(old) P[1-ni].getIframe().style.zIndex = 1;
     $('title').textContent=t.title; $('artist').textContent=t.artist+'  ·  '+t.tier; $('fill').style.width='0';
     load();
@@ -1328,9 +1362,12 @@ setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
   else if(Date.now() - lastMove > 15000 && !down){   // stuck for 15 s: move on
     lastMove = Date.now(); if(navigator.onLine){ toast('That song got stuck, moving on'); next(true); } else netDown(true); return; }
   if(sayQ.length && !talking && !singing){ talking = true; const list = sayQ.splice(0); talk(list, p).finally(()=>{ talking = false; }); }
-  if(cur.karaoke && cur.karaoke.length){   // karaoke: show the line being sung
-    const ln = cur.karaoke.find(l => t >= l[0] - 0.3 && t <= l[1] + 0.3);
-    $('sing').style.display = 'block'; $('sing').innerHTML = '🎤 Sing along!<div>'+(ln ? esc(ln[2]) : '♪ ♪ ♪')+'</div>';
+  if(cur.karaoke && cur.karaoke.length){   // karaoke: show the line being sung, and the next one
+    const i = cur.karaoke.findIndex(l => t >= l[0] - 0.3 && t <= l[1] + 0.3);
+    const nx = cur.karaoke.find(l => l[0] > t + 0.3);
+    $('sing').className = 'kara'; $('sing').style.display = 'block';
+    $('sing').innerHTML = '🎤 Sing along!<div>'+(i >= 0 ? esc(cur.karaoke[i][2]) : '♪ ♪ ♪')+'</div>'
+      + (nx ? '<small>'+esc(nx[2])+'</small>' : '');
   }
   if(singing || talking) return;
   const sg = cur.sing;   // a sing-along drop is waiting: find the hook, then drop the music
@@ -1489,6 +1526,22 @@ function camOff(){
 }
 $('cam').onclick = () => cam ? camOff() : camOn();
 $('skip').onclick = ()=>{ upcoming=null; next(false); };
+$('fullbtn').onclick = ()=>{ if(!cur) return; cur.until = 1e9;   // play to the very end
+  $('fullbtn').textContent = '✓ Playing the full song'; $('fullbtn').style.background = '#2e7d32'; toast('This song plays to the end'); };
+$('karabtn').onclick = async ()=>{ $('karabtn').disabled = true;
+  try { const r = await post('/karaoke'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
+  $('karabtn').disabled = false; };
+// Karaoke now: mix straight into it. A request already lined up plays right after it.
+async function karaNow(){
+  while(busy || fetching) await new Promise(r => setTimeout(r, 300));
+  if(cur && cur.full) return;                       // never cut the birthday song; karaoke comes next
+  const held = upcoming && upcoming.req ? upcoming : null;
+  if(upcoming && !held){ post('/putback?v='+upcoming.vid);
+    if(upcoming.sing) post('/singalong?v='+upcoming.sing.id+'&ok=0'); }
+  upcoming = null;
+  await next(false);
+  if(held && !upcoming) upcoming = held;
+}
 function showMute(){ $('mute').textContent = SOUND.mute ? '🔊 DJ voice on' : '🔇 DJ voice off';
   $('mute').style.background = SOUND.mute ? '#b71c1c' : ''; }
 $('mute').onclick = ()=>{ SOUND.mute = !SOUND.mute; applySound(); showMute();

@@ -224,6 +224,13 @@ python dj.py
     chorus and the words show on the DJ page line by line.
 21. **Themes:** Dark, Light or Party (top right of the DJ page); the page remembers your choice.
 22. Mixes are plain smooth blends: the scratch and build-up effects are switched off.
+23. **Requests play at least 150 seconds** (guest and karaoke too); other songs stay 40–60 s.
+24. **🎵 Play full song:** tap it and the song that's on now plays to its very end.
+25. **🎤 Karaoke:** plays one of the 10 karaoke songs straight away, from the top, with the
+    words in big letters on the DJ page (and the next line under them). A request that was
+    already lined up plays right after it.
+26. **Birthday song** at midnight starts at 0:45 and plays 90 seconds
+    (`birthday_song_start_seconds` / `birthday_song_play_seconds` in `config.yaml`).
 
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the
