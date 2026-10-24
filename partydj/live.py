@@ -171,6 +171,7 @@ class Director:
         self.n_sing = 0
         self._search_yt = None                # signed-out client just for guest searches
         self.last_karaoke = -3600.0
+        self.old_mode = False   # the "Old songs" button: only the songs marked old play
         self.history: list[dict] = []         # every song played tonight, for the recap
         self.wishes: list[dict] = []          # guests' birthday wishes; the host approves each one
         self.say_queue: list[dict] = []       # lines to say straight away (countdown)
@@ -243,8 +244,12 @@ class Director:
         return bool(s.video_id) and s.key not in self.played and not is_blocked(s, *self.blocked) \
             and not (s.full and self.birthday_state != "due")
 
+    def auto_ok(self, s: Song) -> bool:
+        """Songs the DJ may pick by itself: old songs only while the Old songs button is on."""
+        return self.playable(s) and not s.old
+
     def pick_by_tier(self, tier: int) -> Song | None:
-        pool = [s for s in self.everything if self.playable(s)]
+        pool = [s for s in self.everything if self.auto_ok(s)]
         for t in (tier, tier - 1 if tier > 1 else 2, tier + 1):
             same = [s for s in pool if s.energy == t]
             if same:
@@ -253,14 +258,14 @@ class Director:
 
     def pick_auto(self) -> Song | None:
         phase = self.phase_now()
-        planned = [s.song for s in self.slots if s.phase == phase and self.playable(s.song)]
+        planned = [s.song for s in self.slots if s.phase == phase and self.auto_ok(s.song)]
         if planned:
             return self.lean(planned)
         energies = PHASE_RULES[phase]["energies"]
-        fits = [s for s in self.everything if self.playable(s) and s.energy in energies]
+        fits = [s for s in self.everything if self.auto_ok(s) and s.energy in energies]
         if fits:
             return self.lean(fits)
-        rest = [s for s in self.everything if self.playable(s)]
+        rest = [s for s in self.everything if self.auto_ok(s)]
         return rest[0] if rest else None
 
     def choose(self) -> tuple[Song | None, str | None]:
@@ -275,6 +280,10 @@ class Director:
         for r in self.guest_queue():
             if self.playable(r["song"]):
                 return r["song"], "guest"
+        if self.old_mode:
+            olds = [s for s in self.everything if s.old and self.playable(s)]
+            if olds:
+                return self.lean(olds), "old"
         if self.one_shot_tier:
             song = self.pick_by_tier(self.one_shot_tier)
             if song:
@@ -290,7 +299,7 @@ class Director:
         liked = {h["key"]: h.get("likes", 0) for h in self.history}
         asked = set(self.request_log)
         pool = [s for s in self.everything if s.video_id and not s.full and s.key not in recent
-                and s.energy >= 3 and not is_blocked(s, *self.blocked)]
+                and s.energy >= 3 and not is_blocked(s, *self.blocked) and s.old == self.old_mode]
         if not pool:
             return None
         return max(pool, key=lambda s: (liked.get(s.key, 0), s.key in asked, s.energy, -pool.index(s)))
@@ -825,6 +834,17 @@ class Director:
             self.force_next = True
             return True
 
+    def old_toggle(self) -> dict:
+        with self.lock:
+            self.old_mode = not self.old_mode
+            on = self.old_mode
+            left = sum(1 for s in self.everything if s.old and self.playable(s))
+        if on:
+            self.notice(f"📻 Old songs ON: {left} old songs left to play.")
+            return {"on": True, "msg": f"📻 Old songs on ({left} left). Tap again to go back."}
+        self.notice("📻 Old songs OFF: back to the party mix.")
+        return {"on": False, "msg": "Back to the party mix"}
+
     def karaoke_now(self) -> str:
         """The karaoke button: one of the karaoke songs, straight away, with the words on screen."""
         with self.lock:
@@ -982,7 +1002,7 @@ class Director:
             force, self.force_next = self.force_next, False
             return {
                 "mode": self.mode, "notices": self.notices, "vibe_due": self.vibe_due,
-                "scores": self.scores[-6:], "force_next": force,
+                "scores": self.scores[-6:], "force_next": force, "old_mode": self.old_mode,
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
                 "up_next": self.up_next(), "queue": self.queue_view(), "guest_url": guest_url(),
@@ -1100,6 +1120,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
             if u.path == "/requeue":
                 director.requeue(arg)
                 return self._json({"ok": True})
+            if u.path == "/old":
+                return self._json(director.old_toggle())
             if u.path == "/karaoke":
                 return self._json({"msg": director.karaoke_now()})
             if u.path == "/hype":
@@ -1291,6 +1313,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <button class="act" id="skip">⏭ Next song</button>
   <button class="act" id="fullbtn">🎵 Play full song</button>
   <button class="act" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button>
+  <button class="act" id="oldbtn" style="background:#8d6e63">📻 Old songs</button>
   <button class="act" id="hype">🎤 Hype the crowd</button>
   <button class="act" id="blk">🚫 Block this song</button>
   <button class="act" id="blka">🚫 Block this artist</button>
@@ -1492,6 +1515,8 @@ async function load(){
     if(s.guest_url && s.guest_url !== shownQR){ shownQR = s.guest_url; $('qrurl').textContent = s.guest_url;
       $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
     if(s.force_next && cur) pendingForce = true;
+    $('oldbtn').textContent = s.old_mode ? '📻 Old songs: ON' : '📻 Old songs';
+    $('oldbtn').style.background = s.old_mode ? '#2e7d32' : '#8d6e63';
     offerSing(s.singalong);
     bdayAt = s.birthday_at_ms != null ? s.birthday_at_ms : s.birthday_in === null ? null : Date.now() + s.birthday_in*1000; tickCountdown();
     if(s.cake_say && s.cake_say.url && (!cake || cake.url !== s.cake_say.url)){   // learn how long "3, 2, 1" takes
@@ -1602,6 +1627,9 @@ $('fullbtn').onclick = ()=>{ if(!cur) return; cur.until = 1e9;   // play to the 
 $('karabtn').onclick = async ()=>{ $('karabtn').disabled = true;
   try { const r = await post('/karaoke'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
   $('karabtn').disabled = false; };
+$('oldbtn').onclick = async ()=>{ $('oldbtn').disabled = true;
+  try { const r = await post('/old'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
+  $('oldbtn').disabled = false; };
 // Karaoke now: mix straight into it. A request already lined up plays right after it.
 async function karaNow(){
   while(busy || fetching) await new Promise(r => setTimeout(r, 300));

@@ -234,6 +234,9 @@ python dj.py
     *Happy Birthday To You* plays (up to 60 s), then Baar Baar Din Yeh Aaye from 1:00 for 90 s.
     Change them with `happy_birthday_song` in `songs.yaml` and `happy_birthday_play_seconds`,
     `birthday_song_start_seconds`, `birthday_song_play_seconds` in `config.yaml`.
+27. **📻 Old songs:** the songs marked `old` in `songs.yaml` (the first 40, the 60s–90s classics)
+    play only while this button is on. Tap it and they start straight away; tap again to go back
+    to the party mix. A guest can still request one.
 
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the

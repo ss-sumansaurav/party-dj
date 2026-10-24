@@ -38,6 +38,7 @@ class Song:
     explicit: bool = False
     full: bool = False  # play the whole song (the birthday song)
     karaoke: bool = False  # everyone sings it: the DJ calls it and the words show on screen
+    old: bool = False      # plays only while the "Old songs" button is on (or when requested)
     before: "Song | None" = None  # birthday song only: the Happy Birthday song that plays first
 
     # DJ mode plays only part of each song; set from config (song_play_min/max_seconds).
@@ -78,8 +79,9 @@ class Song:
 
 def _song(row) -> Song:
     title, artist, lang, era, energy = row[:5]
+    tags = [str(t).lower() for t in row[5:]]
     return Song(str(title), str(artist), str(lang), str(era), int(energy),
-                karaoke=len(row) > 5 and str(row[5]).lower() == "karaoke")
+                karaoke="karaoke" in tags, old="old" in tags)
 
 
 def title_looks_explicit(title: str) -> bool:
