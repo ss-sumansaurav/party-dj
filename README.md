@@ -19,6 +19,29 @@ It never downloads or re-hosts audio, and never types your Google password anywh
    ```
 3. **Check the config:** edit `config.yaml`, then run `python dj.py --check-config`.
 
+## A new party: Diwali (or another birthday)
+
+```
+python dj.py --setup
+```
+
+It asks what kind of party (Birthday or Diwali), the host's and co-host's names, the city,
+the date, start time, how long, and for Diwali the time of the **Diwali moment**. It saves
+everything in its own file, like `party-diwali-anita.yaml`, and gives the party **its own
+YouTube Music sign-in** (`browser-diwali-anita.json`), so your usual account is never used.
+Sign in with that party's account when it asks (open YouTube Music in Chrome with *that*
+account first). On party night:
+
+```
+python dj.py --config party-diwali-anita.yaml
+```
+
+At a Diwali party the DJ talks about Diwali and the hosts instead of a birthday, guests send
+Diwali wishes from the QR page, and at the Diwali moment the countdown ends with "Three, two,
+one! Happy Diwali!" and *Happy Diwali* then *Aayi Hai Diwali* play (change them with
+`diwali_first_song` / `diwali_song` in `songs.yaml`). Everything else works the same.
+The party runs on the laptop's own clock, so in Australia just use local times.
+
 ## Sign in to YouTube Music
 
 This uses ytmusicapi's browser-header sign-in: you copy request headers from your own

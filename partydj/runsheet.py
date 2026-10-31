@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from .announcer import Writer
+from . import event
 from .planner import BIRTHDAY_BLOCK_MINUTES, SetPlan
 
 INTRO_SECONDS = 45  # birthday intro cue before the birthday song
@@ -31,8 +31,7 @@ def timeline(plan: SetPlan, cfg) -> None:
 
 
 def cues(plan: SetPlan, cfg) -> list[Cue]:
-    w = Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-lines",
-               hindi_share=cfg.hindi_announcement_share)
+    w = event.writer(cfg, seed=f"{cfg.party_date}-lines")
     slots, b = plan.slots, plan.birthday_index
     out = [Cue(0, "opening", w.line("opening"), 0)]
     every = cfg.announcement_interval_songs
@@ -75,10 +74,10 @@ def to_markdown(plan: SetPlan, cue_list: list[Cue], cfg, playlist_url: str | Non
     hindi = sum(not s.is_english for s in songs)
     total = plan.slots[-1].start + plan.slots[-1].song.length
     lines = [
-        f"# Run-sheet: {cfg.birthday_person_name}'s birthday party",
+        f"# Run-sheet: {event.title(cfg)}",
         "",
         f"{cfg.start:%A %d %B %Y}, {_clock(cfg, 0)} to {_clock(cfg, cfg.duration_minutes * 60)}. "
-        f"Host: {cfg.host_name}.",
+        f"Host: {event.hosts(cfg)}.",
         "",
         f"- **{len(songs)} songs** in the timed set (about {total // 60} minutes), plus "
         f"{len(plan.reserve)} extra songs at the end of the playlist",

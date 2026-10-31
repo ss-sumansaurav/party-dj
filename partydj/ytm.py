@@ -13,7 +13,13 @@ class AuthError(RuntimeError):
     pass
 
 
+# Set from the party's config (youtube_auth_file): that party's own account, never the default one.
+PARTY_AUTH_FILE: str | None = None
+
+
 def auth_file() -> Path:
+    if PARTY_AUTH_FILE:
+        return Path(PARTY_AUTH_FILE).expanduser()
     load_dotenv()
     return Path(os.environ.get("YTMUSIC_AUTH_FILE", "browser.json")).expanduser()
 

@@ -37,6 +37,10 @@ class Config:
     birthday_song_start_seconds: int = 60
     happy_birthday_play_seconds: int = 60
     birthday_song_play_seconds: int = 90
+    party_type: str = "birthday"   # birthday or diwali
+    co_host_name: str = ""
+    city: str = ""                 # where the party is, for the DJ's lines
+    youtube_auth_file: str = ""    # this party's own YouTube Music sign-in; empty = browser.json
 
     @property
     def start(self) -> dt.datetime:
@@ -57,7 +61,8 @@ class Config:
     @property
     def playlist_title(self) -> str:
         # ytmusic rejects "<" and ">" in titles
-        return f"Birthday Party – {self.party_date:%d %b %Y}"
+        kind = "Diwali Party" if self.party_type == "diwali" else "Birthday Party"
+        return f"{kind} – {self.party_date:%d %b %Y}"
 
 
 def _time(value, name: str) -> dt.time:
@@ -69,10 +74,12 @@ def _time(value, name: str) -> dt.time:
 
 def load_config(path: str | Path = "config.yaml") -> Config:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    required = [
-        "party_date", "duration_minutes", "birthday_person_name", "host_name",
-        "language_ratio", "announcement_interval_songs",
-    ]
+    party_type = str(raw.get("party_type") or "birthday").strip().lower()
+    if party_type not in ("birthday", "diwali"):
+        raise ConfigError(f"party_type should be birthday or diwali, got {party_type!r}")
+    required = ["party_date", "duration_minutes", "host_name", "language_ratio", "announcement_interval_songs"]
+    if party_type == "birthday":
+        required.append("birthday_person_name")
     missing = [k for k in required if k not in raw]
     if missing:
         raise ConfigError(f"config.yaml is missing: {', '.join(missing)}")
@@ -93,9 +100,10 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         party_date=party_date,
         start_time=_time(raw.get("start_time", "21:00"), "start_time"),
         duration_minutes=int(raw["duration_minutes"]),
-        birthday_person_name=str(raw["birthday_person_name"]).strip(),
+        birthday_person_name=str(raw.get("birthday_person_name") or "").strip(),
         host_name=str(raw["host_name"]).strip(),
-        birthday_block_time=_time(raw.get("birthday_block_time", "00:00"), "birthday_block_time"),
+        birthday_block_time=_time(raw.get("diwali_moment_time", "21:00") if party_type == "diwali"
+                                  else raw.get("birthday_block_time", "00:00"), "the special moment's time"),
         hindi_ratio=hindi,
         english_ratio=english,
         announcement_interval_songs=int(raw["announcement_interval_songs"]),
@@ -113,6 +121,10 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         birthday_song_start_seconds=int(raw.get("birthday_song_start_seconds", 60)),
         happy_birthday_play_seconds=int(raw.get("happy_birthday_play_seconds", 60)),
         birthday_song_play_seconds=int(raw.get("birthday_song_play_seconds", 90)),
+        party_type=party_type,
+        co_host_name=str(raw.get("co_host_name") or "").strip(),
+        city=str(raw.get("city") or "").strip(),
+        youtube_auth_file=str(raw.get("youtube_auth_file") or "").strip(),
     )
 
     if not 30 <= cfg.duration_minutes <= 600:
@@ -125,8 +137,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         raise ConfigError("hindi_announcement_share should be between 0 and 1")
     if not 0 <= cfg.crossfade_seconds <= 15:
         raise ConfigError("crossfade_seconds should be between 0 and 15")
-    if not cfg.birthday_person_name or not cfg.host_name:
+    if not cfg.host_name or (party_type == "birthday" and not cfg.birthday_person_name):
         raise ConfigError("birthday_person_name and host_name can't be empty")
     if not 0 < cfg.birthday_offset_minutes < cfg.duration_minutes:
-        raise ConfigError("birthday_block_time must fall inside the party")
+        raise ConfigError("diwali_moment_time must fall inside the party" if party_type == "diwali"
+                          else "birthday_block_time must fall inside the party")
     return cfg

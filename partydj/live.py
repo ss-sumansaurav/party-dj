@@ -21,7 +21,7 @@ import urllib.parse
 import webbrowser
 from pathlib import Path
 
-from . import announcer, cuts, fx
+from . import announcer, cuts, event, fx
 from .config import load_config
 from .planner import PHASE_RULES, Slot
 from .songbook import Songbook
@@ -59,6 +59,16 @@ def clean_wish(text: str) -> str:
     text = re.sub(r"https?://\S+|www\.\S+", "", text)
     text = " ".join(re.sub(r"[^\w\u0900-\u097F\s.,!?'&:()❤️🎂🎉🥳-]", "", text, flags=re.UNICODE).split())
     return text[:WISH_MAX]
+
+
+def moment_time(cfg, started: dt.datetime) -> dt.datetime:
+    """When the special moment happens: midnight for a birthday, diwali_moment_time for Diwali."""
+    if cfg.party_type != "diwali":
+        return birthday_time(started)
+    at = dt.datetime.combine(started.date(), cfg.birthday_block_time)
+    if cfg.birthday_block_time.hour < 12 <= started.hour:  # e.g. 12:30 AM after an evening start
+        at += dt.timedelta(days=1)
+    return at if at > started else started + dt.timedelta(minutes=5)
 
 
 def birthday_time(started: dt.datetime) -> dt.datetime:
@@ -185,8 +195,7 @@ class Director:
         self.since_announce = 0
         self.closing_done = False
         self.opened = False
-        self.writer = announcer.Writer(cfg.birthday_person_name, cfg.host_name, seed=f"{cfg.party_date}-live",
-                                       hindi_share=cfg.hindi_announcement_share)
+        self.writer = event.writer(cfg, seed=f"{cfg.party_date}-live")
         self.fixed: dict[str, str] = {}    # kind -> audio file name, made at start-up
         self.n_audio = 0
 
@@ -403,10 +412,7 @@ class Director:
             elif self.next_wish() and not announce and not song.full:
                 w = self.next_wish()
                 w["status"] = "said"
-                a = self.speak("wish", self.rng.choice([
-                    f"Got a birthday message for {self.cfg.birthday_person_name} from {w['name']}. {w['text']}",
-                    f"{w['name']} says: {w['text']} Happy birthday, {self.cfg.birthday_person_name}!",
-                ]))
+                a = self.speak("wish", event.wish_line(self.cfg, self.rng, w["name"], w["text"]))
                 announce += [a] if a else []
                 self.since_announce = 0
             elif not announce:
@@ -517,7 +523,7 @@ class Director:
                 return False, "You've sent lots of wishes already. Thank you! 💖"
             self.wishes.append({"id": len(self.wishes) + 1, "name": name, "text": text, "ip": ip,
                                 "status": "ok", "at": dt.datetime.now().strftime("%I:%M %p").lstrip("0")})
-        self.notice(f"💌 Birthday wish from {name}: the DJ reads it out between songs.")
+        self.notice(f"💌 {event.words(self.cfg)['wish'].capitalize()} from {name}: the DJ reads it out between songs.")
         return True, f"Thanks {name}! The DJ will read it out soon 💌"
 
     def review_wish(self, wish_id: str, ok: bool):
@@ -577,16 +583,16 @@ class Director:
         rows = "".join(
             f"<tr><td>{e(h['time'])}</td><td><b>{e(h['title'])}</b><br><small>{e(h['artist'])}</small></td>"
             f"<td>{'●' * h.get('energy', 3)}</td><td>{e(h['who']) + (' → ' + e(h['to']) if h.get('to') else '') if h['who'] else ''}"
-            f"{'🎂' if h['reason'] == 'birthday' else ''}</td><td>{'👍 ' + str(h['likes']) if h.get('likes') else ''}</td></tr>"
+            f"{event.words(self.cfg)['moment_icon'] if h['reason'] == 'birthday' else ''}</td><td>{'👍 ' + str(h['likes']) if h.get('likes') else ''}</td></tr>"
             for h in hist)
-        name = e(self.cfg.birthday_person_name)
+        name = e(event.title(self.cfg))
         avg = f"{sum(scores) / len(scores):.1f} / 5" if scores else "not scored"
         return RECAP_PAGE.replace("__NAME__", name).replace("__BODY__", f"""
 <div class="stats"><div><b>{len(hist)}</b>songs played</div><div><b>{len(reqs)}</b>requests</div>
 <div><b>{len(wishes)}</b>wishes read out</div><div><b>{e(avg)}</b>average vibe</div></div>
 {"<h2>🙋 Top requesters</h2><p>" + ", ".join(f"{e(n)} ({c})" for n, c in sorted(fans.items(), key=lambda x: -x[1])[:8]) + "</p>" if fans else ""}
 {"<h2>👍 Crowd favourites</h2><ol>" + "".join(f"<li>{e(h['title'])} <small>👍 {h['likes']}</small></li>" for h in top) + "</ol>" if top else ""}
-{"<h2>💌 Birthday wishes</h2>" + "".join(f"<p class='wish'>“{e(w['text'])}”<br><small>{e(w['name'])}</small></p>" for w in wishes) if wishes else ""}
+{"<h2>💌 " + e(event.words(self.cfg)["wishes"]) + "</h2>" + "".join(f"<p class='wish'>“{e(w['text'])}”<br><small>{e(w['name'])}</small></p>" for w in wishes) if wishes else ""}
 <h2>🎵 Every song tonight</h2><table><tr><th>Time</th><th>Song</th><th>Energy</th><th>Requested by</th><th></th></tr>{rows}</table>""")
 
     def write_recap(self) -> Path | None:
@@ -899,7 +905,7 @@ class Director:
             rows = sorted(self.request_log.values(), key=lambda r: r["at"])
             lines = [f"{r['at']:%I:%M %p}".lstrip("0") + f"  {r['song'].title} – requested by {who_all(r['names'])}"
                      for r in rows]
-        head = f"Songs requested at {self.cfg.birthday_person_name}'s party:"
+        head = f"Songs requested at {event.title(self.cfg)}:"
         while lines and len(head) + sum(len(l) + 1 for l in lines) > 4900:
             lines.pop(0)  # the description has a size limit; keep the latest
         try:
@@ -976,7 +982,7 @@ class Director:
                     and now >= self.birthday_at + dt.timedelta(seconds=3):
                 self.birthday_state = "due"
                 self.force_next = True
-                self.notice("🎂 Birthday time! The DJ is starting the birthday song.")
+                self.notice(event.words(self.cfg)["moment_notice"])
             if self.next_vibe and now >= self.next_vibe:
                 self.next_vibe = now + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
                 self.vibe_due = not self.cam_on
@@ -993,7 +999,7 @@ class Director:
             if self.started:
                 return
             self.started = dt.datetime.now()
-            self.birthday_at = birthday_time(self.started)
+            self.birthday_at = moment_time(self.cfg, self.started)
             self.next_vibe = self.started + dt.timedelta(minutes=self.cfg.vibe_check_minutes)
         print(f"\n🎉 Party started {self.started:%I:%M %p}. Birthday block at {self.birthday_at:%I:%M %p}.\n")
 
@@ -1035,10 +1041,16 @@ class Director:
 
 
 def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
-    title = html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party DJ")
-    page = PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds)).replace("__TITLE__", title)
-    tv_page = TV_PAGE.replace("__TITLE__", html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party"))
-    guest_page = GUEST_PAGE.replace("__TITLE__", html.escape(f"{director.cfg.birthday_person_name}'s Birthday Party"))
+    def fill(tpl: str, title: str) -> str:  # the party's name and the words for its special moment
+        w = event.words(director.cfg)
+        for k, v in (("__TITLE__", title), ("__MOMENT__", w["moment"]), ("__ICON__", w["moment_icon"]),
+                     ("__WISHES__", w["wishes"]), ("__WISH__", w["wish"]), ("__WISH_HINT__", w["wish_hint"])):
+            tpl = tpl.replace(k, html.escape(v))
+        return tpl
+    name = event.title(director.cfg)
+    page = fill(PAGE.replace("__FADE__", str(director.cfg.crossfade_seconds)), name + " DJ")
+    tv_page = fill(TV_PAGE, name)
+    guest_page = fill(GUEST_PAGE, name)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, code, body=b"", kind="text/html; charset=utf-8"):
@@ -1189,7 +1201,7 @@ def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: 
     if resume:
         director.resume(resume)
     book = Songbook(songs_path, yt, director)
-    book.page_title = f"{cfg.birthday_person_name}'s party songs"
+    book.page_title = f"{event.title(cfg)} songs"
     url = serve(director, book, public)
     if on_ready:
         on_ready(url)
@@ -1330,7 +1342,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <div id="qrurl" style="color:var(--dim);font-size:13px;word-break:break-all"></div>
   <div style="color:var(--dim);font-size:12px;margin-top:4px">Guests need to be on the same Wi-Fi.</div></div>
  <div class="card"><b>🙋 Request queue</b><div style="color:var(--dim);font-size:12px">Most asked-for first, then whoever asked first</div><ol id="queue" style="text-align:left;padding-left:22px;margin:8px 0"></ol></div>
- <div class="card" style="text-align:left"><b>💌 Birthday wishes coming up</b><div style="color:var(--dim);font-size:12px">From guests' phones. The DJ reads one out between songs; press Don't read to drop one.</div><div id="wishes"></div></div>
+ <div class="card" style="text-align:left"><b>💌 __WISHES__ coming up</b><div style="color:var(--dim);font-size:12px">From guests' phones. The DJ reads one out between songs; press Don't read to drop one.</div><div id="wishes"></div></div>
  <div class="card" style="text-align:left"><b>🎚 Sound</b>
   <label class="snd">Music volume <span id="vmusic"></span><input type="range" id="smusic" min="0" max="100"></label>
   <label class="snd">DJ voice volume <span id="vvoice"></span><input type="range" id="svoice" min="0" max="100"></label>
@@ -1461,7 +1473,7 @@ window.wish = (id, ok) => post('/wish?v='+id+'&ok='+ok).then(()=>{ toast("That w
 function tickCountdown(){
   if(bdayAt === null){ $('countdown').textContent = ''; return; }
   const left = Math.max(0, Math.round((bdayAt - Date.now())/1000)), h = Math.floor(left/3600), m = Math.floor(left%3600/60), sec = left%60;
-  $('countdown').textContent = '🎂 Cake time in ' + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(sec).padStart(2,'0');
+  $('countdown').textContent = '__MOMENT__ in ' + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(sec).padStart(2,'0');
 }
 setInterval(tickCountdown, 1000);
 // Midnight, to the second: "3, 2, 1, cut the cake" ends exactly at 12:00:00, and Happy Birthday starts.
@@ -1505,7 +1517,7 @@ async function load(){
   try{ const s = await (await fetch('/state')).json(); $('down').style.display='none';
     document.querySelectorAll('.mode[data-m]').forEach(b=>b.classList.toggle('on', String(s.mode)===b.dataset.m));
     $('overlay').style.display = s.vibe_due ? 'flex' : 'none';
-    $('phase').textContent = s.started ? (s.phase+(s.birthday?'  ·  🎂 birthday at '+s.birthday:'')) : '';
+    $('phase').textContent = s.started ? (s.phase+(s.birthday?'  ·  __MOMENT__ at '+s.birthday:'')) : '';
     $('scores').textContent = s.scores.length ? 'Vibe scores: '+s.scores.join(', ') : '';
     $('notices').innerHTML = s.notices.map(n=>'<li>'+n.replace(/</g,'&lt;')+'</li>').join('');
     const n = upcoming && !upcoming.done ? upcoming : s.up_next;
@@ -1682,8 +1694,8 @@ GUEST_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <label for="song">Song</label><input id="song" maxlength="80" placeholder="Song name, and singer if you know">
  <label for="to">Dedicate it to (optional)</label><input id="to" maxlength="24" placeholder="e.g. Ketan, or your bestie">
  <button id="go">🎶 Request it</button><div id="msg"></div></div>
-<div class="card"><b>💌 Send a birthday wish</b> <small style="color:var(--dim)">The DJ reads it out loud!</small>
- <textarea id="wish" maxlength="140" rows="3" placeholder="Happy birthday! …" style="width:100%;font-size:17px;padding:12px;border-radius:12px;border:0;margin-top:10px;font-family:inherit"></textarea>
+<div class="card"><b>💌 Send a __WISH__</b> <small style="color:var(--dim)">The DJ reads it out loud!</small>
+ <textarea id="wish" maxlength="140" rows="3" placeholder="__WISH_HINT__" style="width:100%;font-size:17px;padding:12px;border-radius:12px;border:0;margin-top:10px;font-family:inherit"></textarea>
  <button id="wishgo">💌 Send wish</button><div id="wishmsg" style="min-height:22px;margin-top:10px"></div></div>
 <div class="card"><b>Request queue</b> <small style="color:var(--dim)">Most asked-for plays first</small><div id="queue"></div></div>
 </main><script>
@@ -1719,7 +1731,7 @@ let bday = null;
 function cd(){
   if(bday === null){ $('cd').textContent = ''; return; }
   const left = Math.max(0, Math.round((bday - Date.now())/1000)), h = Math.floor(left/3600), m = Math.floor(left%3600/60), s = left%60;
-  $('cd').textContent = '🎂 Cake time in ' + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0');
+  $('cd').textContent = '__MOMENT__ in ' + (h ? h+':'+String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0');
 }
 setInterval(cd, 1000);
 $('like').onclick = async () => {
@@ -1761,10 +1773,10 @@ TV_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  @media (max-aspect-ratio:1/1){main{grid-template-columns:1fr} body{overflow:auto}}
 </style></head><body><main>
 <div><h1>🎉 __TITLE__</h1>
- <div class="card" id="cdcard" style="display:none"><div class="label">Cake time in</div><div id="cd"></div></div>
+ <div class="card" id="cdcard" style="display:none"><div class="label">__MOMENT__ in</div><div id="cd"></div></div>
  <div class="card"><div class="label">▶ Now playing</div><div id="title">Getting ready…</div><div id="artist"></div><div id="who"></div><div id="likes"></div></div>
  <div class="card"><div class="label">⏭ Up next</div><div id="next"></div></div>
- <div class="card" id="wishcard" style="display:none"><div class="label">💌 Birthday wishes</div><div id="wishes"></div></div></div>
+ <div class="card" id="wishcard" style="display:none"><div class="label">💌 __WISHES__</div><div id="wishes"></div></div></div>
 <div class="side"><div class="card"><div class="label">📱 Scan to request a song</div><div id="qr"></div>
   <div style="font-size:2.4vh;color:var(--dim)">Request a song, dedicate it, send a wish, or 👍 what's playing</div></div>
  <div class="card"><div class="label">🙋 Request queue</div><ol id="queue"></ol></div></div>
@@ -1798,7 +1810,7 @@ load(); setInterval(load, 2000); setInterval(cd, 1000);
 
 
 RECAP_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>__NAME__'s party recap</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>__NAME__ recap</title>
 <style>
  :root{--bg:#0d0d12;--card:#1b1b24;--pink:#ff2d7a;--txt:#f4f4f8;--dim:#a0a0b0}
  body{margin:0;font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--txt)}
@@ -1808,4 +1820,4 @@ RECAP_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  table{width:100%;border-collapse:collapse} th,td{padding:8px 6px;border-bottom:1px solid #2a2a35;text-align:left;vertical-align:top}
  th{color:var(--dim);font-size:14px} small{color:var(--dim)} .wish{background:var(--card);border-radius:12px;padding:12px;font-style:italic}
  .wish small{font-style:normal}
-</style></head><body><main><h1>🎉 __NAME__'s birthday party</h1>__BODY__</main></body></html>"""
+</style></head><body><main><h1>🎉 __NAME__</h1>__BODY__</main></body></html>"""

@@ -7,6 +7,9 @@
 
 happy_birthday_song: ["Happy Birthday To You", "", en, 00s, 3]   # plays first, at 12:00:00
 birthday_song: ["Baar Baar Din Yeh Aaye", "Mohammed Rafi", hi, 60s, 3]
+# At a Diwali party (party_type: diwali) these two play at the Diwali moment instead.
+diwali_first_song: ["Happy Diwali", "Home Delivery", hi, 2000s, 4]
+diwali_song: ["Aayi Hai Diwali", "Aamdani Atthanni Kharcha Rupaiyaa", hi, 2000s, 4]
 
 songs:
   # 60s-70s classics and sing-alongs

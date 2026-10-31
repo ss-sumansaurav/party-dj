@@ -106,10 +106,13 @@ def parse_request(text: str) -> Song:
 def load_pool(path: str | Path, cfg) -> tuple[list[Song], Song]:
     """Return (usable songs, birthday song) after blocks, requests and de-duplication."""
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    birthday = _song(raw["birthday_song"])
+    # The special moment's songs: the birthday songs, or the Diwali songs at a Diwali party.
+    diwali = getattr(cfg, "party_type", "birthday") == "diwali"
+    first, main = ("diwali_first_song", "diwali_song") if diwali else ("happy_birthday_song", "birthday_song")
+    birthday = _song(raw[main])
     birthday.full = True
-    if raw.get("happy_birthday_song"):
-        birthday.before = _song(raw["happy_birthday_song"])
+    if raw.get(first):
+        birthday.before = _song(raw[first])
         birthday.before.full = True
     songs: dict[str, Song] = {}
     for row in raw.get("songs") or []:

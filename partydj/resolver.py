@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 import json
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def _score(song: Song, result: dict) -> float:
     want, got = song.key, norm(result.get("title", ""))
     if not got:
         return 0.0
-    if any(w in got and w not in want for w in _AVOID):
+    if any(re.search(rf"\b{w}\b", got) and not re.search(rf"\b{w}\b", want) for w in _AVOID):  # whole words: "delivery" isn't "live"
         return 0.0
     title = 1.0 if want and want in got else difflib.SequenceMatcher(None, want, got).ratio()
     if title < 0.6:

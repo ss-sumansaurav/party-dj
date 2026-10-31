@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Party DJ command line.
 
+  python dj.py --setup          set up a new party (birthday or Diwali), its hosts and its YouTube account
   python dj.py --check-config   validate config.yaml and show the party timeline
   python dj.py --sign-in        save YouTube Music sign-in from headers on the clipboard
   python dj.py --check-auth     confirm YouTube Music sign-in works
@@ -34,10 +35,14 @@ def ask(question: str) -> bool:
 
 
 def cmd_check_config(cfg) -> int:
+    from partydj import event
+
     bday = cfg.start + dt.timedelta(minutes=cfg.birthday_offset_minutes)
-    print(f"Party for {cfg.birthday_person_name}, hosted by {cfg.host_name}")
+    print(f"{event.title(cfg)}, hosted by {event.hosts(cfg)}" + (f", in {cfg.city}" if cfg.city else ""))
     print(f"  {cfg.start:%a %d %b, %I:%M %p} to {cfg.end:%a %d %b, %I:%M %p} ({cfg.duration_minutes} min)")
-    print(f"  Birthday block at {bday:%I:%M %p}")
+    print(f"  {'Diwali moment' if cfg.party_type == 'diwali' else 'Birthday block'} at {bday:%I:%M %p}")
+    from partydj.ytm import auth_file
+    print(f"  YouTube Music sign-in: {auth_file()}")
     print(f"  Hindi {cfg.hindi_ratio:.0%} / English {cfg.english_ratio:.0%}")
     print(f"  Announcement every {cfg.announcement_interval_songs} songs, vibe check every {cfg.vibe_check_minutes} min")
     print(f"  Playlist title: {cfg.playlist_title}")
@@ -226,11 +231,19 @@ def sign_in_if_needed() -> bool:
     """Make sure YouTube Music sign-in works, walking the host through it if not."""
     from partydj.ytm import AuthError, check_auth
 
+    from partydj import ytm
+
     try:
-        print(f"Signed in to YouTube Music as: {check_auth()}")
-        return True
+        name = check_auth()
+        print(f"Signed in to YouTube Music as: {name}")
+        if not ytm.PARTY_AUTH_FILE or ask(f"Use {name}'s YouTube account for this party?"):
+            return True
+        print("\nOK, let's sign in with the right account.")
     except AuthError as e:
         print(f"\nYouTube Music sign-in needed ({e})")
+    from partydj import ytm
+    if ytm.PARTY_AUTH_FILE:
+        print("   This party uses its own YouTube account. In Chrome, sign in with THAT account first.")
     print("1. In Chrome, open music.youtube.com (signed in).")
     print("2. Press Option-Command-I, click the Network tab, then click Home on the page.")
     print("3. Type browse in the filter box, right-click the first 'browse' row, Copy > Copy as cURL.")
@@ -247,7 +260,10 @@ def cmd_party(cfg, args) -> int:
     from partydj.playlist import find_existing, url
     from partydj.ytm import client
 
-    print(f"=== {cfg.birthday_person_name}'s birthday party DJ ===\n")
+    from partydj import event
+
+    print(f"=== {event.title(cfg)} DJ ===")
+    print(f"Hosts: {event.hosts(cfg)}" + (f"  ·  {cfg.city}" if cfg.city else "") + "\n")
     if not sign_in_if_needed():
         print("Sign-in didn't work. Run python dj.py again to retry.")
         return 1
@@ -286,7 +302,9 @@ def cmd_songs(cfg, args) -> int:
 
         yt = YTMusic()  # searching works signed out
     book = Songbook(args.songs, yt)
-    book.page_title = f"{cfg.birthday_person_name}'s party songs"
+    from partydj import event
+
+    book.page_title = f"{event.title(cfg)} songs"
     try:
         link = serve_alone(book, live.PORT)
     except OSError:  # the party is running: its page has the songs list too
@@ -304,11 +322,82 @@ def cmd_songs(cfg, args) -> int:
     return 0
 
 
+def _answer(question: str, default: str = "") -> str:
+    try:
+        got = input(f"{question}" + (f" [{default}]" if default else "") + ": ").strip()
+    except EOFError:
+        got = ""
+    return got or default
+
+
+def cmd_setup(args) -> int:
+    """Ask about a new party and save its own settings file (and, if wanted, its own YouTube sign-in)."""
+    import re
+
+    import yaml
+
+    from partydj import ytm
+
+    print("Let's set up a new party. Press Enter to keep the answer in [brackets].\n")
+    kind = _answer("What kind of party? 1 = Birthday, 2 = Diwali", "2")
+    diwali = kind.strip().lower() in ("2", "diwali", "d")
+    host = _answer("Host's name")
+    while not host:
+        host = _answer("Host's name (needed)")
+    co_host = _answer("Co-host's name (Enter if none)")
+    person = "" if diwali else _answer("Whose birthday is it?")
+    city = _answer("Which city is the party in? (e.g. Melbourne)")
+    while True:
+        date = _answer("Party date, like 2026-11-08", f"{dt.date.today():%Y-%m-%d}")
+        start = _answer("Start time, 24-hour clock like 19:00", "19:00")
+        hours = _answer("How many hours?", "5")
+        moment = _answer("Time for the Diwali moment (diyas, wishes, the Diwali songs), like 21:00", "21:00") \
+            if diwali else "00:00"
+        try:
+            dt.date.fromisoformat(date)
+            for t in (start, moment):
+                dt.datetime.strptime(t, "%H:%M")
+            minutes = int(float(hours) * 60)
+            break
+        except ValueError:
+            print("Something didn't look right there. Let's try those again.\n")
+
+    base = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8")) if Path("config.yaml").exists() else {}
+    slug = re.sub(r"[^a-z0-9]+", "-", f"{'diwali' if diwali else 'birthday'} {host}".lower()).strip("-")
+    cfg = {k: v for k, v in (base or {}).items()
+           if k not in ("birthday_person_name", "host_name", "name_pronunciations", "party_date", "start_time",
+                        "duration_minutes", "birthday_block_time", "requested_tracks")}
+    cfg.update({"party_type": "diwali" if diwali else "birthday", "host_name": host, "co_host_name": co_host,
+                "city": city, "party_date": date, "start_time": start, "duration_minutes": minutes,
+                "youtube_auth_file": f"browser-{slug}.json", "requested_tracks": []})
+    if diwali:
+        cfg.update({"diwali_moment_time": moment, "birthday_song_start_seconds": 0})
+    else:
+        cfg.update({"birthday_person_name": person, "birthday_block_time": "00:00"})
+    out = Path(f"party-{slug}.yaml")
+    out.write_text("# Made by: python dj.py --setup. Edit freely.\n" + yaml.safe_dump(cfg, sort_keys=False,
+                   allow_unicode=True), encoding="utf-8")
+    try:
+        load_config(out)
+    except ConfigError as e:
+        print(f"\nSaved {out}, but it needs a fix: {e}\nOpen {out} in TextEdit, fix it, and run: python dj.py --config {out} --check-config")
+        return 1
+    print(f"\nSaved this party's settings in {out}.")
+    print(f"It has its own YouTube Music sign-in ({cfg['youtube_auth_file']}); your usual account isn't used.")
+    ytm.PARTY_AUTH_FILE = cfg["youtube_auth_file"]
+    if ask("Sign in to the YouTube Music account for this party now?"):
+        if not sign_in_if_needed():
+            print("Sign-in didn't work. It will ask again when you start the party.")
+    print(f"\nOn party night, run:\n  python dj.py --config {out}")
+    return 0
+
+
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="AI DJ for a home birthday party")
+    p = argparse.ArgumentParser(description="AI DJ for a home party: a birthday or Diwali")
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--songs-file", dest="songs", default="songs.yaml")
     mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--setup", action="store_true", help="set up a new party: birthday or Diwali")
     mode.add_argument("--check-config", action="store_true")
     mode.add_argument("--sign-in", action="store_true")
     mode.add_argument("--check-auth", action="store_true")
@@ -316,14 +405,21 @@ def main(argv=None) -> int:
     mode.add_argument("--songs", dest="songs_page", action="store_true", help="see, add or remove party songs")
     mode.add_argument("--live", action="store_true", help="same as no option: run the party")
     args = p.parse_args(argv)
-    if args.sign_in:
-        return cmd_sign_in()
+    if args.setup:
+        return cmd_setup(args)
 
     try:
         cfg = load_config(args.config)
     except (ConfigError, OSError) as e:
+        if args.sign_in:
+            return cmd_sign_in()
         print(f"Config problem: {e}")
         return 1
+    from partydj import ytm
+
+    ytm.PARTY_AUTH_FILE = cfg.youtube_auth_file or None  # this party's own account, if it has one
+    if args.sign_in:
+        return cmd_sign_in()
     from partydj import announcer
 
     announcer.DJ_VOICE = cfg.dj_voice

@@ -176,15 +176,18 @@ class Writer:
     """Picks a line for each cue without repeating until a list is used up.
     About `hindi_share` of lines come out in Hindi or Hinglish, where one exists."""
 
-    def __init__(self, name: str, host: str, seed: str, hindi_share: float = 0.0):
+    def __init__(self, name: str, host: str, seed: str, hindi_share: float = 0.0,
+                 lines: dict | None = None, lines_hi: dict | None = None, extra: dict | None = None):
         self.name, self.host = name, host
         self.hindi_share = hindi_share
+        self.lines, self.lines_hi = lines or LINES, lines_hi if lines_hi is not None else LINES_HI
+        self.extra = extra or {}  # more {words} the lines can use, e.g. a Diwali party's {hosts}
         self.rng = random.Random(seed)
         self.decks: dict[tuple[str, str], list[str]] = {}
 
     def line(self, kind: str, next_title: str = "", who: str = "", **extra: str) -> str:
-        hindi = kind in LINES_HI and self.rng.random() < self.hindi_share
-        source = LINES_HI if hindi else LINES
+        hindi = kind in self.lines_hi and self.rng.random() < self.hindi_share
+        source = self.lines_hi if hindi else self.lines
         deck = self.decks.get((kind, hindi))
         if not deck:
             deck = list(source[kind])
@@ -192,7 +195,7 @@ class Writer:
             self.decks[(kind, hindi)] = deck
         name, host = (HINDI_NAMES.get(self.name, self.name), HINDI_NAMES.get(self.host, self.host)) if hindi \
             else (self.name, self.host)
-        text = deck.pop().format(name=name, host=host, next=next_title, who=who, **extra)
+        text = deck.pop().format(name=name, host=host, next=next_title, who=who, **{**self.extra, **extra})
         if len(text.split()) > MAX_WORDS:
             raise ValueError(f"Announcement too long for 15 seconds: {text}")
         return text
