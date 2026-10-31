@@ -4,6 +4,16 @@ set -u
 adb install -r -g party-dj.apk
 adb logcat -c
 adb shell am start -n com.party.dj/.MainActivity
+# The app first asks for the party's details: fill in a Diwali party, like a person would.
+adb forward tcp:8765 tcp:8765
+for i in $(seq 1 60); do
+  if adb logcat -d -s python.stdout:I | grep -q "Setup page is open"; then break; fi
+  sleep 3
+done
+sleep 3
+adb exec-out screencap -p > setup.png || true
+curl -s -m 20 -X POST -d "kind=diwali&host=Amit&co_host=Priya&city=Melbourne&date=$(date +%F)&start=19:00&hours=5&moment=21:00" \
+  http://localhost:8765/setup | head -c 200
 ok=0
 for i in $(seq 1 120); do
   if adb logcat -d -s python.stdout:I | grep -q "The DJ page is open"; then ok=1; break; fi

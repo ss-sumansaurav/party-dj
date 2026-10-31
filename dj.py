@@ -364,16 +364,10 @@ def cmd_setup(args) -> int:
 
     base = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8")) if Path("config.yaml").exists() else {}
     slug = re.sub(r"[^a-z0-9]+", "-", f"{'diwali' if diwali else 'birthday'} {host}".lower()).strip("-")
-    cfg = {k: v for k, v in (base or {}).items()
-           if k not in ("birthday_person_name", "host_name", "name_pronunciations", "party_date", "start_time",
-                        "duration_minutes", "birthday_block_time", "requested_tracks")}
-    cfg.update({"party_type": "diwali" if diwali else "birthday", "host_name": host, "co_host_name": co_host,
-                "city": city, "party_date": date, "start_time": start, "duration_minutes": minutes,
-                "youtube_auth_file": f"browser-{slug}.json", "requested_tracks": []})
-    if diwali:
-        cfg.update({"diwali_moment_time": moment, "birthday_song_start_seconds": 0})
-    else:
-        cfg.update({"birthday_person_name": person, "birthday_block_time": "00:00"})
+    from partydj.event import party_settings
+
+    cfg = party_settings(base, diwali, host, co_host, person, city, date, start, minutes, moment,
+                         auth_file=f"browser-{slug}.json")
     out = Path(f"party-{slug}.yaml")
     out.write_text("# Made by: python dj.py --setup. Edit freely.\n" + yaml.safe_dump(cfg, sort_keys=False,
                    allow_unicode=True), encoding="utf-8")

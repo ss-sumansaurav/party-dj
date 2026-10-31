@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private var web: WebView? = null
     private var speech: SpeechRecognizer? = null
+    private var showing = "loading"   // loading, setup (the party's details) or dj
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,7 +58,7 @@ class MainActivity : Activity() {
         }
         val title = TextView(this).apply {
             setTextColor(Color.parseColor("#FF2D7A")); textSize = 26f; gravity = Gravity.CENTER
-            text = "🎧 Ketan's Birthday Party DJ"
+            text = "🎧 Party DJ"
         }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
@@ -71,8 +72,15 @@ class MainActivity : Activity() {
         when {
             !s.isNull("error") -> status.text =
                 "Something went wrong:\n${s.getString("error")}\n\nCheck the internet connection, then close and reopen the app."
-            s.getBoolean("ready") -> showDj(s.getString("url"))
-            else -> { status.text = s.getString("text"); ui.postDelayed(::poll, 500) }
+            s.getBoolean("ready") -> { showing = "dj"; showDj(s.getString("url")) }
+            !s.isNull("setup") -> {  // ask birthday or Diwali, the hosts and the times
+                if (showing != "setup") { showing = "setup"; showDj(s.getString("setup")) }
+                ui.postDelayed(::poll, 500)
+            }
+            else -> {
+                if (showing == "setup") { showing = "loading"; web?.destroy(); web = null; showLoading() }
+                status.text = s.getString("text"); ui.postDelayed(::poll, 500)
+            }
         }
     }
 

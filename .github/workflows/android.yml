@@ -61,4 +61,6 @@ jobs:
         if: always()
         with:
           name: emulator-screen
-          path: screen.png
+          path: |
+            screen.png
+            setup.png

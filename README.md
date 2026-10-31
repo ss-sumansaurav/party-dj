@@ -116,6 +116,10 @@ Run it again after changing `config.yaml` or `songs.yaml`; the same date gives t
 
 ## Android phone app
 
+When the app opens it asks for the party first: Birthday or Diwali, the host and co-host, the
+city, the date and times (and the Diwali moment). It remembers the answers for next time. The
+phone uses no YouTube account at all.
+
 The same DJ also runs as an Android app (`android/`). GitHub builds it on every push to
 `main` (Actions > "Android app" > the `party-dj-apk` download). Install `party-dj.apk` on the
 phone (allow "install unknown apps" when asked), open **Ketan's Party DJ**, wait while it finds

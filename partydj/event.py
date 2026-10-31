@@ -160,3 +160,22 @@ def wish_line(cfg, rng, name: str, text: str) -> str:
     p = cfg.birthday_person_name
     return rng.choice([f"Got a birthday message for {p} from {name}. {text}",
                        f"{name} says: {text} Happy birthday, {p}!"])
+
+
+def party_settings(base: dict, diwali: bool, host: str, co_host: str, person: str, city: str,
+                   date: str, start: str, minutes: int, moment: str, auth_file: str = "") -> dict:
+    """A new party's settings: the usual config, with this party's answers in place of the old ones."""
+    cfg = {k: v for k, v in (base or {}).items()
+           if k not in ("birthday_person_name", "host_name", "name_pronunciations", "party_date", "start_time",
+                        "duration_minutes", "birthday_block_time", "diwali_moment_time", "requested_tracks",
+                        "party_type", "co_host_name", "city", "youtube_auth_file")}
+    cfg.update({"party_type": "diwali" if diwali else "birthday", "host_name": host, "co_host_name": co_host,
+                "city": city, "party_date": date, "start_time": start, "duration_minutes": minutes,
+                "requested_tracks": []})
+    if auth_file:
+        cfg["youtube_auth_file"] = auth_file
+    if diwali:
+        cfg.update({"diwali_moment_time": moment, "birthday_song_start_seconds": 0})
+    else:
+        cfg.update({"birthday_person_name": person, "birthday_block_time": "00:00"})
+    return cfg

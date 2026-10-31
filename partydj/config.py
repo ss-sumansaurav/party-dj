@@ -140,6 +140,6 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     if not cfg.host_name or (party_type == "birthday" and not cfg.birthday_person_name):
         raise ConfigError("birthday_person_name and host_name can't be empty")
     if not 0 < cfg.birthday_offset_minutes < cfg.duration_minutes:
-        raise ConfigError("diwali_moment_time must fall inside the party" if party_type == "diwali"
+        raise ConfigError("The Diwali moment (diwali_moment_time) must be during the party" if party_type == "diwali"
                           else "birthday_block_time must fall inside the party")
     return cfg
