@@ -58,7 +58,7 @@ class MainActivity : Activity() {
         }
         val title = TextView(this).apply {
             setTextColor(Color.parseColor("#FF2D7A")); textSize = 26f; gravity = Gravity.CENTER
-            text = "🎧 Party DJ"
+            text = "🪔 Amit's Party DJ"
         }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER

@@ -13,7 +13,7 @@
     </queries>
 
     <application
-        android:label="Ketan's Party DJ"
+        android:label="Amit's Party DJ"
         android:icon="@drawable/ic_launcher"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
