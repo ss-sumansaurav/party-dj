@@ -154,6 +154,18 @@ LINES_HI = {
     "cake_10": [
         "दस मिनट में केक कटेगा! {name} के लिए तैयार हो जाओ!",
     ],
+    "cake_5": [
+        "बस पाँच मिनट! सब लोग पास आ जाओ, केक आने वाला है!",
+    ],
+    "birthday_intro": [
+        "सब लोग ध्यान दीजिए! पास आ जाइए, {name} का केक कटने वाला है!",
+    ],
+    "opening": [
+        "Hello everybody! {name} की birthday party में आप सबका स्वागत है. मैं हूँ आपका DJ. चलो, party शुरू करते हैं!",
+    ],
+    "closing": [
+        "आप सब कमाल के थे! {name}, एक बार फिर happy birthday. Good night, everybody!",
+    ],
     "sing_along": [
         "सब मिलकर गाओ! ज़ोर से!",
         "NAHAR WALO, आवाज़ ऊँची करो, सब साथ में गाओ!",
@@ -205,37 +217,29 @@ def is_hindi(text: str) -> bool:
     return bool(re.search(r"[\u0900-\u097F]", text))
 
 
-DJ_VOICE = "en-US-AndrewNeural"  # young American male voice; change in config.yaml (dj_voice)
+DJ_VOICE = "en-US-AndrewMultilingualNeural"  # warm, natural young male voice; change in config.yaml (dj_voice)
 HINDI_VOICE = "hi-IN-MadhurNeural"  # young Hindi male voice for Hindi and Hinglish lines
 SAY_AS = {"Ketan": "Kaytun", "Poonam": "Poonum"}  # spelled the way the voice should say them
 _warned = False
 
-# Voice settings per energy level: speed, pitch, loudness.
-PROSODY = {1: (-2, -3, 0), 2: (2, 0, 5), 3: (8, 3, 10), 4: (12, 6, 20), 5: (16, 10, 30)}
+BACKUP_VOICE = "en-US-AndrewNeural"   # used if the chosen voice isn't available
+
+# Voice settings per energy level: speed, pitch, loudness. Kept gentle: big pitch and speed
+# jumps are what make a synthetic voice sound robotic.
+PROSODY = {1: (-4, -1, 0), 2: (0, 0, 0), 3: (4, 0, 5), 4: (6, 1, 10), 5: (8, 2, 15)}
 
 
 def sentences(text: str) -> list[str]:
     return [p for p in re.split(r"(?<=[.!?।])\s+", text.strip()) if p]
 
 
-def prosody(sentence: str, i: int, n: int, energy: int) -> tuple[str, str, str]:
-    """Modulate each sentence like a DJ: hyped lines climb towards the drop,
-    calm lines settle, and exclamations get extra punch."""
+def prosody(text: str, energy: int) -> tuple[str, str, str]:
+    """A little faster and brighter for hype lines, a little slower for calm ones. The whole
+    line is spoken in one go, so the voice keeps its own natural rise and fall."""
     rate, pitch, vol = PROSODY[max(1, min(5, energy))]
-    if energy >= 3:
-        pitch += 2 * i            # build up through the line
-        if i == n - 1 and n > 1:  # the drop: the song name, loud and quick
-            rate += 4
-            pitch += 3
-            vol += 10
-    else:
-        pitch -= i                # soft, settling delivery
-    if sentence.endswith("!"):
-        pitch += 3
+    if text.rstrip().endswith("!") and energy >= 3:
         vol += 5
-    elif sentence.endswith("?"):
-        pitch += 2
-    return f"{rate:+d}%", f"{min(pitch, 14):+d}Hz", f"{min(vol, 50):+d}%"
+    return f"{rate:+d}%", f"{pitch:+d}Hz", f"{vol:+d}%"
 
 
 def for_voice(text: str, voice: str) -> str:
@@ -252,20 +256,27 @@ def _edge_tts(text: str, out: Path, voice: str, energy: int):
 
     import edge_tts
 
-    parts = sentences(for_voice(text, voice))
+    said = " ".join(sentences(for_voice(text, voice)))
+    rate, pitch, volume = prosody(said, energy)
 
-    async def go():
+    async def go(v: str):
         audio = bytearray()
-        for i, part in enumerate(parts):
-            rate, pitch, volume = prosody(part, i, len(parts), energy)
-            async for chunk in edge_tts.Communicate(part, voice, rate=rate, pitch=pitch, volume=volume).stream():
-                if chunk["type"] == "audio":
-                    audio += chunk["data"]
-        out.write_bytes(bytes(audio))
+        async for chunk in edge_tts.Communicate(said, v, rate=rate, pitch=pitch, volume=volume).stream():
+            if chunk["type"] == "audio":
+                audio += chunk["data"]
+        return bytes(audio)
 
-    asyncio.run(go())
-    if not out.exists() or out.stat().st_size < 1000:
+    audio = b""
+    try:
+        audio = asyncio.run(go(voice))
+    except Exception:
+        if voice in (BACKUP_VOICE, HINDI_VOICE):
+            raise
+    if len(audio) < 1000 and voice not in (BACKUP_VOICE, HINDI_VOICE):
+        audio = asyncio.run(go(BACKUP_VOICE))
+    if len(audio) < 1000:
         raise RuntimeError("edge-tts returned no audio")
+    out.write_bytes(audio)
 
 
 def speak_to_file(text: str, path: Path, voice: str | None = None, energy: int = 3) -> Path:

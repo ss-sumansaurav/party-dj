@@ -64,3 +64,34 @@ jobs:
           path: |
             screen.png
             setup.png
+
+  voice-check:
+    # The container that writes this code can't reach the voice service, so check here that the
+    # DJ's voices (English and Hindi) really produce speech.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Make an English and a Hindi announcement
+        run: |
+          python - <<'PY'
+          import yaml
+          from pathlib import Path
+          cfg = yaml.safe_load(open("config.yaml"))
+          for voice, text in ((cfg["dj_voice"], "Happy Diwali, everybody! Welcome to Amit and Priya's Diwali party. Let's go!"),
+                              (cfg["hindi_voice"], "हाथ ऊपर! Happy Diwali, क्या party है!")):
+              out = Path("voice_check") / voice
+              out.parent.mkdir(exist_ok=True)
+              import asyncio, edge_tts  # straight to the voice, so a missing voice can't fall back quietly
+              asyncio.run(edge_tts.Communicate(text, voice).save(str(out.with_suffix(".mp3"))))
+              size = out.with_suffix(".mp3").stat().st_size
+              print(voice, size, "bytes")
+              assert size > 10000, voice
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-samples
+          path: voice_check/

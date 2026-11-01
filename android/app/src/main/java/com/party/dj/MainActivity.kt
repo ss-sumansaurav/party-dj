@@ -142,6 +142,15 @@ class MainActivity : Activity() {
 
     @Deprecated("Back would stop the party, so ask first")
     override fun onBackPressed() {
+        // On the big screen, the songs list or the recap, back just closes it.
+        val view = web
+        if (view == null || showing != "dj") { askToEnd(); return }
+        view.evaluateJavascript("(window.djBack && window.djBack()) ? 'closed' : 'no'") { r ->
+            if (r?.contains("closed") != true) askToEnd()
+        }
+    }
+
+    private fun askToEnd() {
         AlertDialog.Builder(this)
             .setMessage("End the party? The music will stop.")
             .setPositiveButton("End party") { _, _ -> finishAndRemoveTask(); android.os.Process.killProcess(android.os.Process.myPid()) }

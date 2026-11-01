@@ -27,10 +27,10 @@ class Config:
     blocked_artists: list[str] = field(default_factory=list)
     blocked_tracks: list[str] = field(default_factory=list)
     requested_tracks: list[str] = field(default_factory=list)
-    dj_voice: str = "en-US-AndrewNeural"
+    dj_voice: str = "en-US-AndrewMultilingualNeural"
     name_pronunciations: dict = field(default_factory=dict)
     hindi_voice: str = "hi-IN-MadhurNeural"
-    hindi_announcement_share: float = 0.35
+    hindi_announcement_share: float = 0.5
     song_play_min_seconds: int = 90
     song_play_max_seconds: int = 150
     crossfade_seconds: int = 6
@@ -111,9 +111,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         blocked_artists=[str(x) for x in raw.get("blocked_artists") or []],
         blocked_tracks=[str(x) for x in raw.get("blocked_tracks") or []],
         requested_tracks=[str(x) for x in raw.get("requested_tracks") or []],
-        dj_voice=str(raw.get("dj_voice") or "en-US-AndrewNeural"),
+        dj_voice=str(raw.get("dj_voice") or "en-US-AndrewMultilingualNeural"),
         hindi_voice=str(raw.get("hindi_voice") or "hi-IN-MadhurNeural"),
-        hindi_announcement_share=float(raw.get("hindi_announcement_share", 0.35)),
+        hindi_announcement_share=float(raw.get("hindi_announcement_share", 0.5)),
         name_pronunciations={str(k): str(v) for k, v in (raw.get("name_pronunciations") or {}).items()},
         song_play_min_seconds=int(raw.get("song_play_min_seconds", 90)),
         song_play_max_seconds=int(raw.get("song_play_max_seconds", 150)),

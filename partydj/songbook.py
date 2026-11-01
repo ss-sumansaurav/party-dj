@@ -16,7 +16,36 @@ from . import resolver
 from .songs import MIN_ENERGY, Song, _song, norm, title_looks_explicit
 
 LANGS = {"hi": "Hindi", "pa": "Punjabi", "en": "English"}
+EDITS = Path(".cache/song_edits.json")   # star ratings and languages the host changed, and songs removed
 _lock = threading.Lock()
+
+
+def _row_line(indent: str, row: list) -> str:
+    title, artist, lang, era, energy, *tags = row
+    dump = lambda v: json.dumps(str(v), ensure_ascii=False)
+    return f"{indent}- [{dump(title)}, {dump(artist)}, {lang}, {era}, {energy}" + "".join(f", {t}" for t in tags) + "]\n"
+
+
+def _edits() -> dict:
+    try:
+        return json.loads(EDITS.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_edits(e: dict):
+    EDITS.parent.mkdir(exist_ok=True)
+    EDITS.write_text(json.dumps(e, ensure_ascii=False, indent=1))
+
+
+def _parse(line: str) -> list | None:
+    if not line.lstrip().startswith("- ["):
+        return None
+    try:
+        row = yaml.safe_load(line.strip()[2:])
+    except yaml.YAMLError:
+        return None
+    return row if isinstance(row, list) and len(row) >= 5 else None
 
 
 class Songbook:
@@ -33,7 +62,7 @@ class Songbook:
         out = []
         for i, s in enumerate(self.rows(), 1):
             out.append({"n": i, "title": s.title, "artist": s.artist, "lang": LANGS.get(s.lang, s.lang),
-                        "energy": s.energy, "era": s.era,
+                        "code": s.lang, "energy": s.energy, "era": s.era, "old": s.old,
                         "state": "Not played: too slow (1 dot)" if s.energy < MIN_ENERGY else state.get(s.key, "")})
         return {"songs": out, "live": bool(d)}
 
@@ -75,11 +104,8 @@ class Songbook:
             lines = self.path.read_text(encoding="utf-8").splitlines(keepends=True)
             keep, gone = [], None
             for line in lines:
-                if gone is None and line.lstrip().startswith("- ["):
-                    try:
-                        row = yaml.safe_load(line.strip()[2:])
-                    except yaml.YAMLError:
-                        row = None
+                if gone is None:
+                    row = _parse(line)
                     if row and norm(str(row[0])) == key:
                         gone = str(row[0])
                         continue
@@ -87,9 +113,84 @@ class Songbook:
             if gone is None:
                 return f"'{title}' isn't on the list."
             self.path.write_text("".join(keep), encoding="utf-8")
+            e = _edits()
+            e.setdefault("removed", []).append(key)
+            _save_edits(e)
         if self.director:
             self.director.remove_song(gone)
         return f"Removed '{gone}'."
+
+    def set_song(self, title: str, energy: int | None = None, lang: str | None = None) -> str:
+        """The host's own star rating (1-5) or language for a song, saved in songs.yaml and used
+        by the DJ straight away."""
+        if energy is not None and not 1 <= energy <= 5:
+            return "Pick 1 to 5 stars."
+        if lang is not None and lang not in LANGS:
+            return "Pick Hindi, English or Punjabi."
+        key = norm(title)
+        with _lock:
+            lines = self.path.read_text(encoding="utf-8").splitlines(keepends=True)
+            for i, line in enumerate(lines):
+                row = _parse(line)
+                if row and norm(str(row[0])) == key:
+                    if energy is not None:
+                        row[4] = energy
+                    if lang is not None:
+                        row[2] = lang
+                    lines[i] = _row_line(line[:len(line) - len(line.lstrip())], row)
+                    break
+            else:
+                return f"'{title}' isn't on the list."
+            self.path.write_text("".join(lines), encoding="utf-8")
+            e = _edits()
+            mine = e.setdefault("songs", {}).setdefault(key, {})
+            if energy is not None:
+                mine["energy"] = energy
+            if lang is not None:
+                mine["lang"] = lang
+            _save_edits(e)
+        if self.director:
+            self.director.set_song(key, energy, lang)
+        what = f"{energy} ★" if energy is not None else LANGS[lang]
+        return f"'{row[0]}' is now {what}."
+
+    def merge_from(self, bundled: str | Path) -> int:
+        """A new version of the app brings new songs and fixes: add the songs this copy doesn't
+        have yet (unless the host removed them) and take the new languages and star ratings,
+        except where the host set their own. Returns how many songs were added."""
+        e = _edits()
+        removed, mine = set(e.get("removed", [])), e.get("songs", {})
+        fresh = {}
+        for line in Path(bundled).read_text(encoding="utf-8").splitlines():
+            row = _parse(line)
+            if row:
+                fresh.setdefault(norm(str(row[0])), row)
+        with _lock:
+            lines = self.path.read_text(encoding="utf-8").splitlines(keepends=True)
+            have, changed = set(), False
+            for i, line in enumerate(lines):
+                row = _parse(line)
+                if not row:
+                    continue
+                key = norm(str(row[0]))
+                have.add(key)
+                new = fresh.get(key)
+                own = mine.get(key, {})
+                if new:
+                    lang = own.get("lang", new[2])
+                    energy = own.get("energy", new[4])
+                    if (row[2], row[4]) != (lang, energy):
+                        row[2], row[4] = lang, energy
+                        lines[i] = _row_line(line[:len(line) - len(line.lstrip())], row)
+                        changed = True
+            add = [r for k, r in fresh.items() if k not in have and k not in removed]
+            if add:
+                if lines and not lines[-1].endswith("\n"):
+                    lines[-1] += "\n"
+                lines += ["\n  # Added by an app update\n"] + [_row_line("  ", r) for r in add]
+            if add or changed:
+                self.path.write_text("".join(lines), encoding="utf-8")
+        return len(add)
 
     def handle(self, handler, method: str, path: str, query: dict) -> bool:
         """Serve /songs and its API. Returns False for paths it doesn't own."""
@@ -102,6 +203,10 @@ class Songbook:
             q = lambda k: query.get(k, [""])[0]
             energy = int(q("energy")) if q("energy").isdigit() else 0
             handler._json({"msg": self.add(q("title"), q("artist"), q("lang"), energy)})
+        elif method == "POST" and path == "/api/songs/set":
+            q = lambda k: query.get(k, [""])[0]
+            energy = int(q("energy")) if q("energy").isdigit() else None
+            handler._json({"msg": self.set_song(q("title"), energy, q("lang") or None)})
         elif method == "POST" and path == "/api/songs/remove":
             handler._json({"msg": self.remove(query.get("title", [""])[0])})
         else:
@@ -125,7 +230,8 @@ SONGS_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  button:active{transform:scale(.95)} .del{background:#333;padding:6px 10px;font-size:14px}
  table{width:100%;border-collapse:collapse} th,td{padding:8px 6px;border-bottom:1px solid #2a2a35;text-align:left}
  th{color:var(--dim);font-weight:600;font-size:14px} td.n{color:var(--dim);width:36px}
- .art{color:var(--dim)} .st{font-size:13px;color:var(--pink)} .done{opacity:.45}
+ select.en,select.lg{font-size:15px;padding:6px;background:#2a2a35;color:#ffd54f}
+ select.lg{color:var(--txt)} .art{color:var(--dim)} .st{font-size:13px;color:var(--pink)} .done{opacity:.45}
  #toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:#2e7d32;padding:12px 22px;border-radius:12px;display:none;font-size:17px;max-width:90%}
  #summary{color:var(--dim);text-align:center} a{color:var(--pink)}
  @media (max-width:640px){.hide-s{display:none}}
@@ -140,7 +246,7 @@ SONGS_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <option value="4">4 Banger</option><option value="5">5 On fire</option></select>
  <button id="add">Add</button></div></div>
 <div class="card"><input id="find" placeholder="🔍 Search the list">
-<table><thead><tr><th>#</th><th>Song</th><th class="hide-s">Language</th><th>Energy</th><th></th></tr></thead><tbody id="list"></tbody></table></div>
+<table><thead><tr><th>#</th><th>Song</th><th>Language</th><th>Stars</th><th></th></tr></thead><tbody id="list"></tbody></table></div>
 </main><script>
 const $ = id => document.getElementById(id);
 let all = [];
@@ -151,14 +257,23 @@ function draw(){
   const rows = all.filter(s => !f || (s.title+' '+s.artist).toLowerCase().includes(f));
   $('list').innerHTML = rows.map(s => `<tr class="${s.state==='played'?'done':''}"><td class="n">${s.n}</td>
     <td><b>${esc(s.title)}</b><div class="art">${esc(s.artist)}</div>${s.state?`<div class="st">${esc(s.state)}</div>`:''}</td>
-    <td class="hide-s">${esc(s.lang)}</td><td>${'●'.repeat(s.energy)}</td>
+    <td><select class="lg" data-t="${esc(s.title)}">${LG.map(([v,n])=>`<option value="${v}"${v===s.code?' selected':''}>${n}</option>`).join('')}</select></td>
+    <td><select class="en" data-t="${esc(s.title)}">${[1,2,3,4,5].map(n=>`<option value="${n}"${n===s.energy?' selected':''}>${'★'.repeat(n)}</option>`).join('')}</select></td>
     <td><button class="del" data-t="${esc(s.title)}">Remove</button></td></tr>`).join('');
   document.querySelectorAll('.del').forEach(b => b.onclick = () => remove(b.dataset.t));
+  document.querySelectorAll('select.en').forEach(b => b.onchange = () => change(b.dataset.t, {energy:b.value}));
+  document.querySelectorAll('select.lg').forEach(b => b.onchange = () => change(b.dataset.t, {lang:b.value}));
+}
+const LG = [['hi','Hindi'],['en','English'],['pa','Punjabi']];
+async function change(title, what){
+  try { const msg = await post('/api/songs/set', {title, ...what}); toast(msg, !msg.includes(' is now '));
+    const s = all.find(x=>x.title===title); if(s){ if(what.energy) s.energy=+what.energy; if(what.lang){ s.code=what.lang; } } }
+  catch(e){ toast("The DJ program isn't running. In Terminal run: python dj.py", true); }
 }
 async function load(){
   const r = await (await fetch('/api/songs')).json(); all = r.songs;
-  const hi = all.filter(s=>s.lang!=='English').length;
-  $('summary').textContent = `${all.length} songs · ${hi} Hindi/Punjabi, ${all.length-hi} English`
+  const n = c => all.filter(s=>s.code===c).length;
+  $('summary').textContent = `${all.length} songs · ${n('hi')} Hindi, ${n('pa')} Punjabi, ${n('en')} English · tap the stars or language to change them`
     + (r.live ? ' · changes reach the DJ straight away' : ' · changes are used the next time you run python dj.py');
   draw();
 }
@@ -180,7 +295,7 @@ async function remove(title){
 }
 $('find').oninput = draw;
 $('title').onkeydown = $('artist').onkeydown = e => { if(e.key==='Enter') $('add').click(); };
-load(); setInterval(load, 15000);
+load(); setInterval(() => { if(!(document.activeElement||{}).matches?.('select,input')) load(); }, 15000);
 </script></body></html>"""
 
 

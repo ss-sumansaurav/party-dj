@@ -91,6 +91,9 @@ DIWALI_LINES = {
 }
 
 DIWALI_LINES_HI = {
+    "opening": [
+        "Happy Diwali, everybody! {hosts_hi} की Diwali party{in_city_hi} में आप सबका स्वागत है. मैं हूँ आपका DJ. तो चलो, party शुरू करते हैं!",
+    ],
     "Warm-up": [
         "शुभ दीपावली! अब आ रहा है एक evergreen गाना, {next}!",
         "दीये जल रहे हैं, माहौल बन रहा है. ज़ोर से गाइए, ये है {next}!",
@@ -105,18 +108,55 @@ DIWALI_LINES_HI = {
     ],
     "Peak 2": [
         "पार्टी अभी ख़त्म नहीं हुई, दोस्तों! Let's go, {next}!",
+        "आज रुकना मना है! सब floor पे, ये है {next}!",
     ],
     "Wind-down": [
         "अब थोड़ा धीरे चलते हैं. ये है {next}.",
+        "थोड़ा साँस ले लो, और साथ में गाओ. ये है {next}.",
+    ],
+    "vibe_up": [
+        "अरे, इतनी शांति क्यों? आज Diwali है! चलो, {next}!",
     ],
     "request": [
         "Request आई है, और क्या कमाल की choice है! ये है {next}!",
+    ],
+    "guest_request": [
+        "{who} की फ़रमाइश पर, ये है {next}! Let's go!",
+        "ये गाना {who} के लिए, जिन्होंने request किया! चलो, {next}!",
+    ],
+    "dedication": [
+        "ये गाना {to} के लिए, {who} की तरफ़ से, ढेर सारे प्यार के साथ! चलो, {next}!",
+    ],
+    "dance_floor": [
+        "अरे, सब बैठे क्यों हो? चलो dance floor पे! ये है {next}!",
+    ],
+    "karaoke": [
+        "Karaoke time! Screen पे words हैं, सब मिलकर गाओ! ये है {next}!",
+    ],
+    "sing_along": [
+        "सब मिलकर गाओ! ज़ोर से!",
+    ],
+    "hype": [
+        "{hosts_hi} के लिए ज़ोरदार तालियाँ! और ज़ोर से!",
+        "हाथ ऊपर! Happy Diwali, क्या party है!",
+    ],
+    "cake_10": [
+        "दस मिनट में हमारा Diwali moment है! अपने family और friends को पास बुला लो!",
+    ],
+    "cake_5": [
+        "बस पाँच मिनट! सब लोग पास आ जाओ, Diwali moment आने वाला है!",
+    ],
+    "birthday_intro": [
+        "सब लोग ध्यान दीजिए! पास आ जाइए, दीये तैयार रखिए. {hosts_hi} के साथ हमारा Diwali moment!",
     ],
     "cake": [
         "तीन, दो, एक! सबको दीपावली की हार्दिक शुभकामनाएँ! Happy Diwali!",
     ],
     "shoutout": [
-        "दीपावली मुबारक! {hosts}, इस शानदार पार्टी के लिए thank you!",
+        "दीपावली मुबारक! {hosts_hi}, इस शानदार पार्टी के लिए thank you!",
+    ],
+    "closing": [
+        "आप सब कमाल के थे! एक बार फिर, Happy Diwali. {hosts_hi}, thank you. Good night, everybody!",
     ],
 }
 
@@ -150,7 +190,9 @@ def writer(cfg, seed: str) -> announcer.Writer:
     return announcer.Writer(hosts(cfg), cfg.host_name, seed=seed, hindi_share=cfg.hindi_announcement_share,
                             lines=DIWALI_LINES, lines_hi=DIWALI_LINES_HI,
                             extra={"hosts": hosts(cfg), "in_city": f" in {city}" if city else "",
-                                   "city_shout": f", {city}" if city else ""})
+                                   "city_shout": f", {city}" if city else "",
+                                   "hosts_hi": hosts(cfg).replace(" and ", " और "),
+                                   "in_city_hi": f", {city}" if city else ""})
 
 
 def wish_line(cfg, rng, name: str, text: str) -> str:

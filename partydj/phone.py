@@ -162,6 +162,14 @@ def _start(files_dir: str):
     shutil.copy(HERE / "config.yaml", "config.yaml")
     if not Path("songs.yaml").exists():
         shutil.copy(HERE / "songs.yaml", "songs.yaml")
+    else:  # an app update: bring in its new songs, keeping the host's own changes
+        from .songbook import Songbook
+        try:
+            added = Songbook("songs.yaml").merge_from(HERE / "songs.yaml")
+            if added:
+                print(f"Added {added} new songs from the app update.")
+        except Exception as e:
+            print(f"(couldn't bring in the new songs: {e})")
 
     from . import announcer, live, planner, resolver, runsheet
     from .config import load_config

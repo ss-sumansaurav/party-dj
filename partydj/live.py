@@ -32,6 +32,8 @@ REQUEST_LOG = Path("requests.csv")
 AUDIO_DIR = Path("announcements")
 PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
+LANG_NAMES = {"hi": "Hindi", "en": "English", "pa": "Punjabi"}
+FIRE = "fire"   # the Crescendo button: only 5-star songs
 GUEST_PORT = 8766          # request page only, for the public link
 PUBLIC = {"url": None}     # the public link, once it's open
 TV_PATHS = ("/tv", "/api/tv", "/qr.svg")  # the big screen can be a TV on the Wi-Fi
@@ -42,7 +44,7 @@ STATE_FILE = Path(".cache/party_state.json")  # where the party is up to, for pi
 RECAP_FILE = Path("party_recap.html")
 WISH_MAX = 140                 # characters in a guest's birthday wish
 WISHES_PER_PHONE = 5
-TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2"}
+TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2", FIRE: "Peak 2"}
 
 
 def clean_name(name: str) -> str:
@@ -137,11 +139,18 @@ def log_mood(score: int, playing: str, decision: str):
         w.writerow([dt.datetime.now().isoformat(timespec="seconds"), score, playing, decision])
 
 
-def start_offset(song: Song) -> int:
-    """Skip a little of the intro on longer songs, like a DJ mixing in."""
-    if song.full or not song.seconds or song.seconds < 200:
+def start_offset(song: Song, lines: list = (), lo: int = 40) -> int:
+    """Where to come in, like a DJ mixing in on the beat: skip the slow intro. With timed lyrics,
+    just before the hook (the chorus, where the beat drops) when it comes early enough; otherwise
+    about 15 seconds in."""
+    length = song.full_length
+    if song.full or length < 150:
         return 0
-    return 10
+    hook = cuts.chorus(lines)[0] if lines else []
+    first = next((h for h in hook if 20 <= h <= 110), None)
+    if first is not None and length - (first - 6) >= lo + 20:
+        return int(first - 6)
+    return 15 if length >= 180 else 10
 
 
 class Director:
@@ -182,6 +191,8 @@ class Director:
         self._search_yt = None                # signed-out client just for guest searches
         self.last_karaoke = -3600.0
         self.old_mode = False   # the "Old songs" button: only the songs marked old play
+        self.langs: set[str] = set()   # the Hindi / English / Punjabi buttons; empty = every language
+        self._any_lang = False
         self.history: list[dict] = []         # every song played tonight, for the recap
         self.wishes: list[dict] = []          # guests' birthday wishes; the host approves each one
         self.say_queue: list[dict] = []       # lines to say straight away (countdown)
@@ -253,12 +264,19 @@ class Director:
         return bool(s.video_id) and s.key not in self.played and not is_blocked(s, *self.blocked) \
             and not (s.full and self.birthday_state != "due")
 
-    def auto_ok(self, s: Song) -> bool:
-        """Songs the DJ may pick by itself: old songs only while the Old songs button is on."""
-        return self.playable(s) and not s.old
+    def lang_ok(self, s: Song) -> bool:
+        return not self.langs or self._any_lang or s.lang in self.langs
 
-    def pick_by_tier(self, tier: int) -> Song | None:
+    def auto_ok(self, s: Song) -> bool:
+        """Songs the DJ may pick by itself: old songs only while the Old songs button is on,
+        and only the languages picked with the language buttons."""
+        return self.playable(s) and not s.old and self.lang_ok(s)
+
+    def pick_by_tier(self, tier) -> Song | None:
         pool = [s for s in self.everything if self.auto_ok(s)]
+        if tier == FIRE:  # Crescendo: 5 stars only, and once they've all played, the best of them again
+            fire = [s for s in pool if s.energy == 5]
+            return self.lean(fire) if fire else self.encore(energy=5)
         for t in (tier, tier - 1 if tier > 1 else 2, tier + 1):
             same = [s for s in pool if s.energy == t]
             if same:
@@ -278,7 +296,18 @@ class Director:
         return rest[0] if rest else None
 
     def choose(self) -> tuple[Song | None, str | None]:
-        """What plays next (without changing anything), and why."""
+        """What plays next (without changing anything), and why. When the language buttons leave
+        nothing to play, the DJ plays the other languages rather than going quiet."""
+        song, why = self._choose()
+        if song is None and self.langs:
+            self._any_lang = True
+            try:
+                song, why = self._choose()
+            finally:
+                self._any_lang = False
+        return song, why
+
+    def _choose(self) -> tuple[Song | None, str | None]:
         if self.birthday_state == "due":
             return self.happy_birthday() or self.birthday_song(), "birthday"
         if self.birthday_state == "hb":
@@ -286,11 +315,14 @@ class Director:
         for cand, why in self.inserts:
             if self.playable(cand):
                 return cand, why
-        for r in self.guest_queue():
-            if self.playable(r["song"]):
+        fire = self.mode == FIRE
+        for r in self.guest_queue():  # during the Crescendo, quieter requests wait for it to end
+            if self.playable(r["song"]) and (not fire or r["song"].energy == 5):
                 return r["song"], "guest"
+        if fire:
+            return self.pick_by_tier(FIRE), "fire"
         if self.old_mode:
-            olds = [s for s in self.everything if s.old and self.playable(s)]
+            olds = [s for s in self.everything if s.old and self.playable(s) and self.lang_ok(s)]
             if olds:
                 return self.lean(olds), "old"
         if self.one_shot_tier:
@@ -301,14 +333,15 @@ class Director:
         song = self.pick_by_tier(self.mode) if self.mode != "auto" else self.pick_auto()
         return song or self.encore(), None
 
-    def encore(self) -> Song | None:
+    def encore(self, energy: int = 3) -> Song | None:
         """Every song has played: rather than going quiet, bring back the night's favourites
         (most 👍, then requested), never one of the last 40."""
         recent = {h["key"] for h in self.history[-40:]}
         liked = {h["key"]: h.get("likes", 0) for h in self.history}
         asked = set(self.request_log)
+        old = self.old_mode and self.mode != FIRE
         pool = [s for s in self.everything if s.video_id and not s.full and s.key not in recent
-                and s.energy >= 3 and not is_blocked(s, *self.blocked) and s.old == self.old_mode]
+                and s.energy >= energy and not is_blocked(s, *self.blocked) and s.old == old and self.lang_ok(s)]
         if not pool:
             return None
         return max(pool, key=lambda s: (liked.get(s.key, 0), s.key in asked, s.energy, -pool.index(s)))
@@ -371,7 +404,7 @@ class Director:
                 elif why == "guest":
                     r = self.guest_reqs.pop(song.key)
                     names, to = r["names"], r.get("to", "")
-                elif why in ("boost", "hold"):
+                elif why in ("boost", "hold", "fire"):
                     self.one_shot_tier = None
             if song is None:
                 return {"done": True}
@@ -436,17 +469,19 @@ class Director:
             if self.singalong_pending and not song.full:
                 self.singalong_pending = False
                 sing = self.make_singalong(song)
-            start = start_offset(song)
-            words = cuts.lyric_text(self.yt, song.video_id) if kara else []
+            lines = cuts.lyric_text(self.yt, song.video_id)
+            words = lines if kara else []
             lo, hi = self.cfg.song_play_min_seconds, self.cfg.song_play_max_seconds
             if reason in ("guest", "request", "karaoke"):  # requests get a proper play
                 lo, hi = max(lo, REQUEST_MIN_SECONDS), max(hi, REQUEST_MIN_SECONDS + 30)
-            if words and reason != "karaoke":  # start just before the hook, the part everyone knows
+            start = start_offset(song, lines, lo)  # come in on the beat, not the slow intro
+            if reason in ("guest", "request", "karaoke"):  # a request plays nearly from the top
+                start = min(start, 15 if reason != "karaoke" else 10)
+            elif words:  # a karaoke song in the mix: start just before the hook, the part everyone knows
                 hook = cuts.chorus(words)[0]
                 if hook and hook[0] > 8:
                     start = int(hook[0] - 4)
-            play, fade = cuts.best_play(song.full_length, start, cuts.lyric_text(self.yt, song.video_id),
-                                        lo, hi, self.cfg.crossfade_seconds)
+            play, fade = cuts.best_play(song.full_length, start, lines, lo, hi, self.cfg.crossfade_seconds)
             if reason == "birthday" and song is self.happy_birthday():
                 start, fade = 0, self.cfg.crossfade_seconds
                 play = min(song.full_length, self.cfg.happy_birthday_play_seconds)
@@ -673,9 +708,43 @@ class Director:
 
     def set_mode(self, mode: str):
         with self.lock:
-            self.mode = int(mode) if mode in ("1", "2", "3", "4", "5") else "auto"
+            self.mode = int(mode) if mode in ("1", "2", "3", "4", "5") else FIRE if mode == FIRE else "auto"
+            if self.mode == FIRE:
+                self.old_mode = False
+                left = sum(1 for s in self.everything if s.energy == 5 and self.auto_ok(s))
+        if self.mode == FIRE:
+            self.notice(f"🔥 Crescendo ON: only 5-star songs now ({left} left). Tap again to go back.")
+            return
         label = TIERS.get(self.mode, "Auto (follow the plan)") if self.mode != "auto" else "Auto (follow the plan)"
         self.notice(f"Vibe set to {label}. It starts with the next song.")
+
+    def lang_toggle(self, lang: str) -> dict:
+        """The Hindi / English / Punjabi buttons: while any is on, only those languages play."""
+        with self.lock:
+            if lang in LANG_NAMES:
+                self.langs ^= {lang}
+            else:
+                self.langs = set()
+            if self.langs == set(LANG_NAMES):
+                self.langs = set()
+            on = [LANG_NAMES[x] for x in LANG_NAMES if x in self.langs]
+            left = sum(1 for s in self.everything if self.auto_ok(s))
+        if on:
+            msg = f"Only {' + '.join(on)} songs now ({left} left)."
+        else:
+            msg = "Every language again: Hindi, English and Punjabi."
+        self.notice("🎵 " + msg)
+        return {"langs": sorted(self.langs), "msg": msg}
+
+    def set_song(self, key: str, energy: int | None, lang: str | None):
+        """The host changed a song's stars or language on the songs page."""
+        with self.lock:
+            for s in self.everything:
+                if s.key == key:
+                    if energy is not None:
+                        s.energy = energy
+                    if lang is not None:
+                        s.lang = lang
 
     def add_score(self, score: int, source: str = "host"):
         with self.lock:
@@ -844,6 +913,8 @@ class Director:
         with self.lock:
             self.old_mode = not self.old_mode
             on = self.old_mode
+            if on and self.mode == FIRE:
+                self.mode = "auto"
             left = sum(1 for s in self.everything if s.old and self.playable(s))
         if on:
             self.notice(f"📻 Old songs ON: {left} old songs left to play.")
@@ -1009,6 +1080,7 @@ class Director:
             return {
                 "mode": self.mode, "notices": self.notices, "vibe_due": self.vibe_due,
                 "scores": self.scores[-6:], "force_next": force, "old_mode": self.old_mode,
+                "langs": sorted(self.langs),
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
                 "up_next": self.up_next(), "queue": self.queue_view(), "guest_url": guest_url(),
@@ -1134,6 +1206,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return self._json({"ok": True})
             if u.path == "/old":
                 return self._json(director.old_toggle())
+            if u.path == "/lang":
+                return self._json(director.lang_toggle(arg))
             if u.path == "/karaoke":
                 return self._json({"msg": director.karaoke_now()})
             if u.path == "/hype":
@@ -1248,7 +1322,13 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #side{position:sticky;top:12px} #side .card{margin-top:0}
  #nxtitle{font-size:22px;font-weight:700;margin-top:8px} #nxartist{color:var(--dim)}
  @media (max-width:820px){#ui:not([hidden]){grid-template-columns:1fr} #side{position:static}}
- #stop{background:#b71c1c} #mic.on{background:var(--pink);animation:pulse 1s infinite}
+ .big{font-size:22px;font-weight:700;padding:20px 22px;border-radius:16px;border:0;background:#333;color:#fff;cursor:pointer;flex:1;min-width:150px}
+ .big small{display:block;font-size:13px;font-weight:500;opacity:.85}
+ #main .row{flex-wrap:nowrap} @media (max-width:520px){.big{font-size:18px;padding:18px 8px;min-width:0}}
+ #stop{background:#b71c1c} #fullbtn{background:#1565c0} #skip{background:#455a64}
+ #firebtn{background:linear-gradient(90deg,#ff6f00,#e53935,#d81b60);font-size:24px} #firebtn.on{box-shadow:0 0 0 3px #fff,0 0 24px #ff6f00}
+ .lang{font-size:18px;padding:14px 20px;border-radius:14px;border:2px solid #555;background:transparent;color:var(--txt);cursor:pointer;min-width:96px}
+ .lang.on{background:#2e7d32;border-color:#fff;color:#fff} #mic.on{background:var(--pink);animation:pulse 1s infinite}
  @keyframes pulse{50%{opacity:.6}}
  h1{margin:8px 0} .card{background:var(--card);border-radius:16px;padding:16px;margin:12px 0}
  #start{font-size:34px;padding:22px 60px;border-radius:20px;border:0;background:var(--pink);color:#fff;cursor:pointer;margin:30px}
@@ -1304,6 +1384,34 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="ui" hidden><div id="left">
  <div class="card"><div id="countdown"></div><div id="phase" style="color:var(--dim)"></div>
   <div id="title">…</div><div id="artist"></div><div id="reqby"></div><div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div></div>
+ <div class="card" id="main"><div class="row">
+  <button class="big" id="stop">⏹ Stop music</button>
+  <button class="big" id="fullbtn">🎵 Play full song</button>
+  <button class="big" id="skip">⏭ Next song</button></div></div>
+ <div class="card"><b>What to play</b><div class="row" style="margin-top:10px">
+  <button class="big" id="firebtn">🔥 Crescendo <small>5★ dance songs only</small></button></div>
+  <div class="row" style="margin-top:10px">
+  <button class="lang" data-l="hi">Hindi</button><button class="lang" data-l="pa">Punjabi</button><button class="lang" data-l="en">English</button>
+  <button class="act" id="oldbtn" style="background:#8d6e63">📻 Old songs</button>
+  <button class="act" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button></div>
+  <div style="color:var(--dim);font-size:13px;margin-top:6px">Tap a language to play only those songs. Tap it again to go back to every language.</div>
+  <div style="margin-top:14px;color:var(--dim)">Or pick the vibe</div><div class="row" style="margin-top:6px">
+  <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
+  <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
+  <button class="mode" data-m="2" style="background:#00897b">🙂 Groove</button>
+  <button class="mode" data-m="3" style="background:#7cb342">💃 Dance</button>
+  <button class="mode" data-m="4" style="background:#fb8c00">🔥 Bangers</button>
+  <button class="mode" data-m="5" style="background:#e53935">🚀 On fire</button></div></div>
+ <div class="card"><b>Request a song</b><div style="margin-top:10px">
+  <button class="act" id="mic" title="Say the song name">🎙 Speak</button>
+  <input id="req" placeholder="Song name - Artist"> <button class="act" id="reqb">Add</button></div></div>
+ <div class="card row">
+  <button class="act" id="mute">🔇 DJ voice off</button>
+  <button class="act" id="hype">🎤 Hype the crowd</button>
+  <button class="act" id="tvbtn">📺 Big screen</button>
+  <button class="act" id="recapbtn">📜 Party recap</button>
+  <button class="act" id="blk">🚫 Block this song</button>
+  <button class="act" id="blka">🚫 Block this artist</button></div>
  <div class="card" id="camcard"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:center">
   <div style="flex:1;min-width:240px"><div style="font-size:22px;font-weight:700">📷 Crowd camera</div>
    <div id="camlabel" style="font-size:26px;font-weight:700;margin:10px 0;color:var(--pink)">Off</div>
@@ -1312,28 +1420,6 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
    <div style="color:var(--dim);font-size:13px;margin-top:10px">Point it at the dance floor. It measures how much people move and steers the music. Only a movement number is kept: no video or photos are saved or sent, and no faces are looked at.</div></div>
   <div style="flex:1.2;min-width:260px"><video id="camv" autoplay muted playsinline style="width:100%;max-height:300px;background:#000;border-radius:14px;transform:scaleX(-1)"></video></div>
  </div></div>
- <div class="card"><b>Pick the vibe</b><div class="row" style="margin-top:10px">
-  <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
-  <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
-  <button class="mode" data-m="2" style="background:#00897b">🙂 Groove</button>
-  <button class="mode" data-m="3" style="background:#7cb342">💃 Dance</button>
-  <button class="mode" data-m="4" style="background:#fb8c00">🔥 Bangers</button>
-  <button class="mode" data-m="5" style="background:#e53935">🚀 On fire</button></div></div>
- <div class="card row">
-  <button class="act" id="stop">⏹ Stop music</button>
-  <button class="act" id="mute">🔇 DJ voice off</button>
-  <button class="act" id="skip">⏭ Next song</button>
-  <button class="act" id="fullbtn">🎵 Play full song</button>
-  <button class="act" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button>
-  <button class="act" id="oldbtn" style="background:#8d6e63">📻 Old songs</button>
-  <button class="act" id="hype">🎤 Hype the crowd</button>
-  <button class="act" id="blk">🚫 Block this song</button>
-  <button class="act" id="blka">🚫 Block this artist</button>
-  <button class="act" onclick="window.open('/tv','dj-tv')">📺 Big screen</button>
-  <button class="act" onclick="window.open('/recap','dj-recap')">📜 Party recap</button></div>
- <div class="card"><b>Request a song</b><div style="margin-top:10px">
-  <button class="act" id="mic" title="Say the song name">🎙 Speak</button>
-  <input id="req" placeholder="Song name - Artist"> <button class="act" id="reqb">Add</button></div></div>
  <div class="card"><b>For you</b><div id="scores" style="color:var(--dim)"></div><ul id="notices"></ul></div>
 </div>
 <div id="side"><div class="card"><b>⏭ Up next</b><div id="nxtitle">…</div><div id="nxartist"></div></div>
@@ -1527,6 +1613,9 @@ async function load(){
     if(s.guest_url && s.guest_url !== shownQR){ shownQR = s.guest_url; $('qrurl').textContent = s.guest_url;
       $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
     if(s.force_next && cur) pendingForce = true;
+    $('firebtn').classList.toggle('on', s.mode === 'fire');
+    $('firebtn').innerHTML = s.mode === 'fire' ? '🔥 Crescendo: ON <small>tap to go back to the normal mix</small>' : '🔥 Crescendo <small>5★ dance songs only</small>';
+    document.querySelectorAll('.lang').forEach(b => b.classList.toggle('on', (s.langs||[]).includes(b.dataset.l)));
     $('oldbtn').textContent = s.old_mode ? '📻 Old songs: ON' : '📻 Old songs';
     $('oldbtn').style.background = s.old_mode ? '#2e7d32' : '#8d6e63';
     offerSing(s.singalong);
@@ -1576,8 +1665,8 @@ $('stop').onclick = async ()=>{
   else { setStopped(false); p.playVideo(); ramp(p, 0, 100, 1.5); toast('Music back on'); }
 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-$('songslink').onclick = e => { e.preventDefault(); $('songsframe').src='/songs'; $('songsbox').style.display='flex'; };
-$('songsclose').onclick = () => { $('songsbox').style.display='none'; $('songsframe').src='about:blank'; load(); };
+$('songslink').onclick = e => { e.preventDefault(); openBox('/songs'); };
+$('songsclose').onclick = () => window.closeBox();
 function heard(said){ $('req').value = said; toast('Heard: '+said); setTimeout(()=>$('reqb').click(), 600); }
 $('mic').onclick = ()=>{
   const p = P[active], wasStopped = stopped;
@@ -1642,6 +1731,31 @@ $('karabtn').onclick = async ()=>{ $('karabtn').disabled = true;
 $('oldbtn').onclick = async ()=>{ $('oldbtn').disabled = true;
   try { const r = await post('/old'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
   $('oldbtn').disabled = false; };
+$('firebtn').onclick = async ()=>{ $('firebtn').disabled = true;
+  try { const on = !$('firebtn').classList.contains('on');
+    await post('/mode?v='+(on ? 'fire' : 'auto')); toast(on ? '🔥 Crescendo! Only 5-star songs now' : 'Back to the normal mix');
+    if(on) await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
+  $('firebtn').disabled = false; };
+// The language buttons: the song already lined up is swapped for one in the new languages.
+document.querySelectorAll('.lang').forEach(b => b.onclick = async ()=>{
+  try { const r = await post('/lang?v='+b.dataset.l); toast(r.msg);
+    while(fetching) await new Promise(r => setTimeout(r, 300));
+    if(upcoming && !upcoming.req && !upcoming.done){ post('/putback?v='+upcoming.vid);
+      if(upcoming.sing) post('/singalong?v='+upcoming.sing.id+'&ok=0'); upcoming = null; }
+    load(); } catch(e){ $('down').style.display='block'; } });
+// Big screen and recap open over the DJ page, so the music keeps going and ✕ comes back.
+// On a computer the big screen can still go in its own window, for a TV or a second screen.
+function openBox(url){ $('songsframe').src = url; $('songsbox').style.display = 'flex'; }
+window.closeBox = () => { if($('songsbox').style.display !== 'flex') return false;
+  $('songsbox').style.display='none'; $('songsframe').src='about:blank'; load(); return true; };
+window.djBack = () => window.closeBox();   // the phone's back button
+$('tvbtn').onclick = () => (window.AndroidSpeech || matchMedia('(pointer:coarse)').matches) ? openBox('/tv') : window.open('/tv','dj-tv');
+$('recapbtn').onclick = () => openBox('/recap');
+// What the big screen's own buttons do, when it's opened from this page.
+window.djControls = {
+  full: () => $('fullbtn').click(), next: () => $('skip').click(), stop: () => $('stop').click(),
+  back: () => window.closeBox(), state: () => ({stopped, full: !!(cur && cur.until >= 1e9)}),
+};
 // Karaoke now: mix straight into it. A request already lined up plays right after it.
 async function karaNow(){
   while(busy || fetching) await new Promise(r => setTimeout(r, 300));
@@ -1769,6 +1883,10 @@ TV_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #qr{background:#fff;border-radius:2vh;padding:1.5vh;width:fit-content;margin:1.5vh auto} #qr img{width:24vh;height:24vh;display:block}
  .side{text-align:center} ol{text-align:left;font-size:2.8vh;margin:1vh 0;padding-left:4vh} li{margin:.8vh 0} li small{color:var(--dim)}
  .wish{font-size:3vh;font-style:italic;margin:1.5vh 0} .wish small{display:block;font-style:normal;color:var(--dim);font-size:2.2vh}
+ #ctl{position:fixed;left:50%;bottom:2vh;transform:translateX(-50%);display:none;gap:1.5vh;z-index:5}
+ #ctl button{font-size:min(2.8vh,4.2vw);font-weight:700;padding:1.6vh 2.4vh;border-radius:1.6vh;border:0;color:#fff;cursor:pointer;background:#333;white-space:nowrap}
+ body.ctl main{padding-bottom:12vh}
+ #cfull{background:#1565c0!important} #cnext{background:#455a64!important} #cback{background:#b71c1c!important}
  #fs{position:fixed;right:1.5vh;bottom:1.5vh;background:#333;color:#fff;border:0;border-radius:1vh;padding:1vh 2vh;font-size:2vh;opacity:.5;cursor:pointer}
  @media (max-aspect-ratio:1/1){main{grid-template-columns:1fr} body{overflow:auto}}
 </style></head><body><main>
@@ -1780,8 +1898,18 @@ TV_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div class="side"><div class="card"><div class="label">📱 Scan to request a song</div><div id="qr"></div>
   <div style="font-size:2.4vh;color:var(--dim)">Request a song, dedicate it, send a wish, or 👍 what's playing</div></div>
  <div class="card"><div class="label">🙋 Request queue</div><ol id="queue"></ol></div></div>
-</main><button id="fs">⛶ Full screen</button><script>
+</main><div id="ctl"><button id="cback">✕ Back to the DJ</button><button id="cfull">🎵 Play full song</button><button id="cnext">⏭ Next song</button></div>
+<button id="fs">⛶ Full screen</button><script>
 const $ = id => document.getElementById(id);
+// Opened from the DJ page (over it, or in its own window): show its main buttons here too.
+// A TV on the Wi-Fi has no DJ page behind it, so it shows none.
+const dj = (() => { try { return (parent !== window && parent.djControls) || (opener && opener.djControls) || null; } catch(e){ return null; } })();
+if(dj){ $('ctl').style.display = 'flex'; document.body.classList.add('ctl');
+  if(parent === window) $('cback').textContent = '✕ Close'; else $('cback').style.display = 'none';  // the DJ page has its own ✕ above
+  $('cback').onclick = () => { if(parent !== window) dj.back(); else window.close(); };
+  $('cfull').onclick = () => { dj.full(); showFull(); };
+  $('cnext').onclick = () => { dj.next(); setTimeout(showFull, 300); }; }
+function showFull(){ try { $('cfull').textContent = dj.state().full ? '✓ Playing the full song' : '🎵 Play full song'; } catch(e){} }
 const esc = s => String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let bday = null, qr = null;
 $('fs').onclick = () => { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); $('fs').style.display = 'none'; };
@@ -1793,6 +1921,7 @@ function cd(){
 async function load(){
   try {
     const s = await (await fetch('/api/tv')).json();
+    if(dj) showFull();
     if(s.now){ $('title').textContent = s.now.title; $('artist').textContent = s.now.artist;
       $('who').textContent = s.now.who ? '🙋 Requested by '+s.now.who+(s.now.to ? ' · for '+s.now.to : '') : '';
       $('likes').textContent = s.likes ? '👍 '+s.likes : ''; }
