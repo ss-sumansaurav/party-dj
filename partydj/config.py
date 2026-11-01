@@ -12,6 +12,9 @@ class ConfigError(ValueError):
     pass
 
 
+OLD_DEFAULTS = {"en-US-AndrewNeural": "en-US-AndrewMultilingualNeural"}
+
+
 @dataclass
 class Config:
     party_date: dt.date
@@ -111,9 +114,11 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         blocked_artists=[str(x) for x in raw.get("blocked_artists") or []],
         blocked_tracks=[str(x) for x in raw.get("blocked_tracks") or []],
         requested_tracks=[str(x) for x in raw.get("requested_tracks") or []],
-        dj_voice=str(raw.get("dj_voice") or "en-US-AndrewMultilingualNeural"),
+        # A party file saved before Nov 2026 still has the old defaults: move it to the new voice.
+        dj_voice=OLD_DEFAULTS.get(str(raw.get("dj_voice")), str(raw.get("dj_voice") or "en-US-AndrewMultilingualNeural")),
         hindi_voice=str(raw.get("hindi_voice") or "hi-IN-MadhurNeural"),
-        hindi_announcement_share=float(raw.get("hindi_announcement_share", 0.5)),
+        hindi_announcement_share=0.5 if raw.get("hindi_announcement_share") in (None, 0.35)
+        else float(raw["hindi_announcement_share"]),
         name_pronunciations={str(k): str(v) for k, v in (raw.get("name_pronunciations") or {}).items()},
         song_play_min_seconds=int(raw.get("song_play_min_seconds", 90)),
         song_play_max_seconds=int(raw.get("song_play_max_seconds", 150)),
