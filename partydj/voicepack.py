@@ -26,6 +26,7 @@ API = "https://api.elevenlabs.io/v1"
 MODEL = "eleven_multilingual_v2"
 # Lively and expressive: low stability lets the voice move, high style pushes the delivery.
 SETTINGS = {"stability": 0.3, "similarity_boost": 0.8, "style": 0.7, "use_speaker_boost": True}
+DEFAULT_VOICE = ("TX3LPaxmHKxFdv7VOQHJ", "Liam")   # a lively built-in voice, if listing voices isn't allowed
 LIKED = ("Liam", "Will", "Chris", "Josh", "Eric", "Charlie", "Brian", "Adam")
 
 # {hosts} = "Amit and Priya", {host} = "Amit", {city} = "Melbourne" (from the party's settings).
@@ -129,10 +130,27 @@ class Pack:
 
 # ---------- recording them (on the Mac, once) ----------
 def _call(path: str, key: str, body: dict | None = None) -> bytes:
-    req = urllib.request.Request(API + path, data=json.dumps(body).encode() if body else None,
-                                 headers={"xi-api-key": key, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read()
+    headers = {"xi-api-key": key, "Accept": "application/json" if body is None else "audio/mpeg"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(API + path, data=json.dumps(body).encode() if body else None, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        e.why = _why(e)
+        raise
+
+
+def _why(e: urllib.error.HTTPError) -> str:
+    """ElevenLabs' own reason (never includes the key)."""
+    try:
+        d = json.loads(e.read().decode("utf-8", "replace")).get("detail")
+        if isinstance(d, dict):
+            return " ".join(str(x) for x in (d.get("status"), d.get("message")) if x)
+        return str(d or "")[:300]
+    except Exception:
+        return ""
 
 
 def _clean(key: str) -> str:
@@ -223,9 +241,10 @@ def record(cfg) -> int:
                 key = _ask_key()
                 if key:
                     continue
-            print(f"ElevenLabs said no ({e.code}). On elevenlabs.io, open API Keys, make a new key with")
-            print("'Text to Speech' and 'Voices' allowed (or no restrictions), then run this again.")
-            return 1
+            print(f"Couldn't list the voices ({e.code}: {getattr(e, 'why', '') or 'no reason given'}).")
+            voice_id, name = DEFAULT_VOICE
+            print(f"Trying ElevenLabs' built-in voice {name} instead…")
+            break
     tmp = PACK.with_name("voice_pack_new")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir()
@@ -237,7 +256,9 @@ def record(cfg) -> int:
             audio = _call(f"/text-to-speech/{voice_id}?output_format=mp3_44100_128", key,
                           {"text": text, "model_id": MODEL, "voice_settings": SETTINGS})
         except urllib.error.HTTPError as e:
-            print(f"  ✗ line {i} failed ({e.code}); nothing was changed. Run this again later.")
+            print(f"  ✗ line {i} failed ({e.code}: {getattr(e, 'why', '') or 'no reason given'}). Nothing was changed.")
+            print("  If it's about the key: on elevenlabs.io open API Keys, make a new key with")
+            print("  'Text to Speech' and 'Voices' allowed (or no restrictions), then run this again.")
             shutil.rmtree(tmp, ignore_errors=True)
             return 1
         (tmp / fname).write_bytes(audio)
