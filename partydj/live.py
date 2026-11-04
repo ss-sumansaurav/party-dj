@@ -45,6 +45,7 @@ STATE_FILE = Path(".cache/party_state.json")  # where the party is up to, for pi
 RECAP_FILE = Path("party_recap.html")
 WISH_MAX = 140                 # characters in a guest's birthday wish
 WISHES_PER_PHONE = 5
+RECORDED_ONLY = True   # announcements come only from partydj/voice_pack; no recording = the DJ stays quiet
 TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2", FIRE: "Peak 2"}
 
 
@@ -232,6 +233,8 @@ class Director:
         if clip:  # the recorded voice: it never names the song, the screen does
             print(f"  🎤 {clip['text']}")
             return {"url": f"/voicepack/{clip['file']}", "text": clip["text"]}
+        if RECORDED_ONLY:  # Suman: only the recorded voice, never the computer one
+            return None
         self.n_audio += 1
         name = f"live_{self.n_audio:03d}_{kind.replace(' ', '_')}"
         try:

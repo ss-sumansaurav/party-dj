@@ -108,21 +108,40 @@ class Pack:
         script = {t for _, t in lines_for()}
         self.clips = {k: [c for c in v if c.get("text") in script] for k, v in self.clips.items()}
         self.clips = {k: [c for c in v if (folder / c["file"]).exists()] for k, v in self.clips.items()}
-        self.turn: dict[str, int] = {}
+        self.recent: list[str] = []
         self.rng = random.Random()
 
     def __bool__(self):
         return any(self.clips.values())
 
     def pick(self, kind: str) -> dict | None:
-        clips = self.clips.get(kind)
-        if not clips:
+        """A random recorded clip for this moment, never the one played last.
+        A moment with no recording of its own borrows from a close one (FALLBACK), else None."""
+        kinds = [kind] + FALLBACK.get(kind, [])
+        pool = [c for k in kinds[:1] for c in self.clips.get(k, [])]
+        if kind == "hype" or not pool:   # 🎤 Hype the crowd: any of the high-energy lines
+            pool += [c for k in kinds[1:] for c in self.clips.get(k, [])]
+        if not pool:
             return None
-        if kind not in self.turn:
-            self.turn[kind] = self.rng.randrange(len(clips))
-        c = clips[self.turn[kind] % len(clips)]
-        self.turn[kind] += 1
+        fresh = [c for c in pool if c["file"] not in self.recent] or pool
+        c = self.rng.choice(fresh)
+        self.recent = (self.recent + [c["file"]])[-max(1, min(4, len(pool) - 1)):]
         return c
+
+
+# Moments that use other recorded lines: hype picks from all the high-energy ones; a moment whose
+# own recording is missing borrows a line that fits. With nothing that fits, the DJ stays quiet.
+FALLBACK = {
+    "hype": ["vibe_up", "Peak", "Peak 2", "dance_floor"],
+    "opening": ["Warm-up"],
+    "shoutout": ["hype"],
+    "vibe_up": ["dance_floor"],
+    "request": ["guest_request"],
+    "guest_request": ["request"],
+    "dedication": ["guest_request"],
+    "sing_along": ["karaoke"],
+    "karaoke": ["sing_along"],
+}
 
 
 # ---------- recording them (on the Mac, once) ----------
