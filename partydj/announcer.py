@@ -217,7 +217,7 @@ def is_hindi(text: str) -> bool:
     return bool(re.search(r"[\u0900-\u097F]", text))
 
 
-DJ_VOICE = "en-US-AndrewMultilingualNeural"  # warm, natural young male voice; change in config.yaml (dj_voice)
+DJ_VOICE = "en-IN-PrabhatNeural"  # Indian English male voice, like a desi club DJ; change in config.yaml (dj_voice)
 HINDI_VOICE = "hi-IN-MadhurNeural"  # young Hindi male voice for Hindi and Hinglish lines
 SAY_AS = {"Ketan": "Kaytun", "Poonam": "Poonum"}  # spelled the way the voice should say them
 _warned = False

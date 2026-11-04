@@ -15,13 +15,13 @@ language_ratio:
   hindi: 0.7                   # at least 70% Hindi
   english: 0.3                 # at most 30% English
 
-# DJ voice (Microsoft neural voice via edge-tts): a warm, natural-sounding young male voice that
-# speaks each line in one go. Other options: en-US-BrianMultilingualNeural, en-IN-PrabhatNeural
-# (Indian English), en-US-AndrewNeural (the older voice, also the backup).
-dj_voice: en-US-AndrewMultilingualNeural
-# Announcements come out in Hindi/Hinglish or English, the Hindi ones in this voice. 0.5 = half of them.
+# DJ voice (Microsoft neural voice via edge-tts): Indian English, like a desi club DJ, speaking each
+# line in one go. Other options: en-IN-NeerjaNeural (female), en-US-AndrewMultilingualNeural,
+# en-US-AndrewNeural (also the backup).
+dj_voice: en-IN-PrabhatNeural
+# Share of announcements in Hindi, in this voice. 0 = all in English (Suman, Nov 2026).
 hindi_voice: hi-IN-MadhurNeural
-hindi_announcement_share: 0.5
+hindi_announcement_share: 0
 # How the voice should say names, spelled out the way they sound. Tweak if a name sounds off.
 name_pronunciations:
   Ketan: Kaytun

@@ -40,6 +40,7 @@ class Song:
     karaoke: bool = False  # everyone sings it: the DJ calls it and the words show on screen
     old: bool = False      # plays only while the "Old songs" button is on (or when requested)
     before: "Song | None" = None  # birthday song only: the Happy Birthday song that plays first
+    tags: tuple = ()       # extra words from songs.yaml, e.g. "intl" (Spanish and other hits) or "diwali"
 
     # DJ mode plays only part of each song; set from config (song_play_min/max_seconds).
     play_cap = None
@@ -81,7 +82,7 @@ def _song(row) -> Song:
     title, artist, lang, era, energy = row[:5]
     tags = [str(t).lower() for t in row[5:]]
     return Song(str(title), str(artist), str(lang), str(era), int(energy),
-                karaoke="karaoke" in tags, old="old" in tags)
+                karaoke="karaoke" in tags, old="old" in tags, tags=tuple(tags))
 
 
 def title_looks_explicit(title: str) -> bool:

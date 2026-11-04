@@ -64,7 +64,7 @@ class Songbook:
             out.append({"n": i, "title": s.title, "artist": s.artist, "lang": LANGS.get(s.lang, s.lang),
                         "code": s.lang, "energy": s.energy, "era": s.era, "old": s.old,
                         "state": "Not played: too slow (1 dot)" if s.energy < MIN_ENERGY else state.get(s.key, "")})
-        return {"songs": out, "live": bool(d)}
+        return {"songs": out, "live": bool(d), "dislikes": [x.get("title", "") for x in self.dislikes()]}
 
     def add(self, title: str, artist: str, lang: str, energy: int) -> str:
         title, artist = title.strip(), artist.strip()
@@ -98,7 +98,17 @@ class Songbook:
             self.director.add_song(song)
         return f"Added '{title}'.{found}"
 
-    def remove(self, title: str) -> str:
+    def dislikes(self) -> list[dict]:
+        return list(_edits().get("dislikes", []))
+
+    def save_dislike(self, d: dict | None):
+        """Remember a 👎 for next time (None forgets them all)."""
+        with _lock:
+            e = _edits()
+            e["dislikes"] = e.get("dislikes", []) + [d] if d else []
+            _save_edits(e)
+
+    def remove(self, title: str, quiet: bool = False) -> str:
         key = norm(title)
         with _lock:
             lines = self.path.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -116,7 +126,7 @@ class Songbook:
             e = _edits()
             e.setdefault("removed", []).append(key)
             _save_edits(e)
-        if self.director:
+        if self.director and not quiet:
             self.director.remove_song(gone)
         return f"Removed '{gone}'."
 
@@ -140,6 +150,9 @@ class Songbook:
                     lines[i] = _row_line(line[:len(line) - len(line.lstrip())], row)
                     break
             else:
+                # A song from a YouTube Music playlist (Play songs like…): rated for tonight only.
+                if self.director and self.director.set_song(key, energy, lang):
+                    return f"'{title}' is now {energy} ★ for tonight." if energy else f"'{title}' changed for tonight."
                 return f"'{title}' isn't on the list."
             self.path.write_text("".join(lines), encoding="utf-8")
             e = _edits()
@@ -179,8 +192,9 @@ class Songbook:
                 if new:
                     lang = own.get("lang", new[2])
                     energy = own.get("energy", new[4])
-                    if (row[2], row[4]) != (lang, energy):
+                    if (row[2], row[4], row[5:]) != (lang, energy, new[5:]):
                         row[2], row[4] = lang, energy
+                        row[5:] = new[5:]
                         lines[i] = _row_line(line[:len(line) - len(line.lstrip())], row)
                         changed = True
             add = [r for k, r in fresh.items() if k not in have and k not in removed]
@@ -239,6 +253,7 @@ SONGS_PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="toast"></div>
 <h1>🎵 __TITLE__</h1>
 <div id="summary"></div>
+<div id="dis" style="display:none;text-align:center;color:var(--dim);margin-top:6px"></div>
 <div class="card"><b>Add a song</b><div class="row" style="margin-top:10px">
  <input id="title" placeholder="Song name"><input id="artist" placeholder="Singer or artist">
  <select id="lang"><option value="hi">Hindi</option><option value="pa">Punjabi</option><option value="en">English</option></select>
@@ -275,6 +290,11 @@ async function load(){
   const n = c => all.filter(s=>s.code===c).length;
   $('summary').textContent = `${all.length} songs · ${n('hi')} Hindi, ${n('pa')} Punjabi, ${n('en')} English · tap the stars or language to change them`
     + (r.live ? ' · changes reach the DJ straight away' : ' · changes are used the next time you run python dj.py');
+  const d = r.dislikes || [];
+  $('dis').style.display = d.length ? 'block' : 'none';
+  $('dis').innerHTML = d.length ? `👎 Removed from the main screen: ${d.map(esc).join(', ')}. The DJ skips those singers and plays fewer songs like them.`
+    + (r.live ? ' <button class="del" id="forget">Forget these</button>' : '') : '';
+  if($('forget')) $('forget').onclick = async () => { await fetch('/undislike', {method:'POST'}); toast('Forgotten: every singer can play again'); load(); };
   draw();
 }
 async function post(path, params){

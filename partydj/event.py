@@ -5,88 +5,89 @@ from . import announcer
 
 # The DJ's lines for a Diwali party. {hosts} is "Host and Co-host", {city} where the party is.
 DIWALI_LINES = {
+    # Said like a smart Indian club DJ: English, with the odd Hindi word everyone at the party uses.
     "opening": [
-        "Happy Diwali, everybody! Welcome to {hosts}'s Diwali party{in_city}. I'm your DJ tonight. Lights on, diyas on, let's get this party started!",
+        "Happy Diwali, everybody! Welcome to {hosts}'s Diwali party{in_city}. I'm your DJ for tonight. Diyas are lit, the vibe is set, so chalo, let's get this party started!",
     ],
     "Warm-up": [
-        "Easing into the festive vibe with a real classic. Sing it loud, this is {next}!",
-        "Diyas are glowing and so is this one. Here's a timeless song, {next}!",
-        "Good food, great people, Diwali vibes. Keep it rolling with {next}!",
-        "Old school, gold school. Turn it up, this is {next}!",
+        "Easing into the festive mood with a proper classic. Sing along, this is {next}!",
+        "Diyas glowing, food is ready, and the music is on. Here's {next}!",
+        "Old is gold, my friends. Volume up, this is {next}!",
+        "Good food, great company, Diwali vibes. Keep it rolling with {next}!",
     ],
     "Build": [
-        "Ooh, I see you moving! The floor is warming up. Let's keep it going, {next}!",
-        "Now we're talking! All the hits tonight. Get up, it's {next}!",
-        "{host}, get everyone on the floor. This one's {next}. Let's go!",
-        "The festive energy is building and I love it! Here comes {next}!",
+        "Arre wah, I see some moves already! Let's keep it going, this is {next}!",
+        "Now we're talking! {host}, get everyone on the floor. This one's {next}!",
+        "The energy is building, I love it! Coming up, {next}!",
+        "Full josh now, everybody! Let's go, {next}!",
     ],
     "Peak": [
-        "Okay, this is it! Hands up, all the way up! It's {next}!",
-        "Turn it up! Louder! This one goes hard. Let's go, {next}!",
-        "Brighter than the fireworks! Everybody, {next}!",
-        "Dhol's coming in, you know what time it is! Balle balle, {next}!",
+        "Okay, this is the moment! Haath upar, hands all the way up! It's {next}!",
+        "Turn it up, louder! This one is a total banger. Let's go, {next}!",
+        "Brighter than the fireworks outside! Everybody, {next}!",
+        "Dhol is coming in, you know what time it is! Balle balle, {next}!",
     ],
     "Peak 2": [
-        "You thought we were done? Not even close! Let's go, {next}!",
-        "This Diwali party is on another level. Don't stop now, it's {next}!",
+        "Thought we were done? No way! The night is still young. Here's {next}!",
+        "This Diwali party is next level! Don't stop now, it's {next}!",
         "Let me hear you{city_shout}! Everybody on the floor for {next}!",
-        "No slowing down tonight! Bring it back, {next}!",
+        "Ekdum full power! Bring it back, {next}!",
     ],
     "Wind-down": [
-        "Alright, let's slow it down. Grab someone special. This is {next}.",
-        "Take a breath, sing along with me. Here's {next}.",
+        "Alright, let's slow it down a little. Grab someone special. This is {next}.",
+        "Take a breather and sing along with me. Here's {next}.",
         "Easy now, feel this one. It's {next}.",
     ],
     "vibe_up": [
-        "Hold up, hold up. I need more energy than that! It's Diwali, it's {next}!",
+        "Arre, why so quiet? It's Diwali, I need more energy! Here's {next}!",
         "Come on, I know you've got more! Let's turn it up, it's {next}!",
     ],
     "request": [
-        "We got a request coming in, and it's a good one! This is {next}!",
-        "Somebody's got great taste! By request, here's {next}!",
+        "We have a request, and what a choice! This is {next}!",
+        "Somebody has great taste! By request, here's {next}!",
     ],
     "guest_request": [
-        "This one's a request from {who}! Great choice. Let's go, {next}!",
-        "Shoutout to {who}, you asked for it, you got it! It's {next}!",
+        "This one is a request from {who}! Great choice. Let's go, {next}!",
+        "Shout-out to {who}, you asked for it, you got it! It's {next}!",
         "Request coming up for {who}! Everybody, this is {next}!",
     ],
     "dedication": [
-        "This one goes out to {to}, with love from {who}! It's {next}!",
+        "This one goes out to {to}, with lots of love from {who}! It's {next}!",
         "Special dedication! From {who}, for {to}. Here's {next}!",
     ],
     "dance_floor": [
-        "Hey, I see a lot of people sitting down! Come on, everybody on the dance floor. It's {next}!",
-        "Dance floor's looking lonely! Grab a friend and get up here. This is {next}!",
+        "I see too many people sitting down! Chalo, everybody on the dance floor. It's {next}!",
+        "The dance floor is looking lonely! Grab a friend and come on up. This is {next}!",
     ],
     "karaoke": [
-        "Karaoke time! Everybody, the words are on the screen. Sing it loud, this is {next}!",
-        "It's your turn to be the singer! Everybody sing along to {next}!",
+        "Karaoke time! The words are on the screen, so sing it loud. This is {next}!",
+        "Tonight you are the singer! Everybody sing along to {next}!",
     ],
     "sing_along": [
-        "This one's yours! Everybody sing!",
+        "This one is yours! Everybody sing!",
         "I can't hear you! Sing it with me, everybody!",
     ],
     "hype": [
         "Make some noise for {hosts}! Louder! Let me hear you!",
-        "Everybody, hands up! Happy Diwali, what a party!",
+        "Everybody, haath upar! Happy Diwali, what a party!",
     ],
     "cake_10": [
         "Ten minutes to our Diwali moment! Find your family and friends and get ready!",
     ],
     "cake_5": [
-        "Five minutes to go! Everybody gather round, it's almost our Diwali moment!",
+        "Just five minutes to go! Everybody gather round, our Diwali moment is almost here!",
     ],
     "birthday_intro": [
-        "Alright everybody, can I get your attention? Gather round, diyas ready. It's our Diwali moment with {hosts}!",
+        "Can I have everyone's attention, please? Gather round, diyas ready. It's our Diwali moment with {hosts}!",
     ],
     "cake": [
         "Three, two, one! Happy Diwali, everybody! Shubh Deepavali!",
     ],
     "shoutout": [
-        "Happy Diwali{city_shout}! A huge thank you to {hosts} for bringing everyone together tonight!",
+        "Happy Diwali{city_shout}! A big thank you to {hosts} for bringing everyone together tonight!",
     ],
     "closing": [
-        "You were amazing tonight! Happy Diwali once again. {hosts}, thank you for this party. Good night, everybody!",
+        "You were all amazing tonight! Happy Diwali once again. {hosts}, thank you for this lovely party. Good night, everybody!",
     ],
 }
 

@@ -21,11 +21,11 @@ import urllib.parse
 import webbrowser
 from pathlib import Path
 
-from . import announcer, cuts, event, fx
+from . import announcer, cuts, event, fx, theme
 from .config import load_config
 from .planner import PHASE_RULES, Slot
 from .songbook import Songbook
-from .songs import Song, is_blocked, parse_request, title_looks_explicit
+from .songs import Song, is_blocked, norm, parse_request, title_looks_explicit
 
 MOOD_LOG = Path("mood_log.csv")
 REQUEST_LOG = Path("requests.csv")
@@ -34,6 +34,7 @@ PORT = 8765
 TIERS = {1: "Chill", 2: "Groove", 3: "Dance", 4: "Bangers", 5: "On fire"}
 LANG_NAMES = {"hi": "Hindi", "en": "English", "pa": "Punjabi"}
 FIRE = "fire"   # the Crescendo button: only 5-star songs
+LANG_MIX = {"hi": 0.45, "pa": 0.25, "en": 0.3}   # with no language button on, the DJ mixes about this much of each
 GUEST_PORT = 8766          # request page only, for the public link
 PUBLIC = {"url": None}     # the public link, once it's open
 TV_PATHS = ("/tv", "/api/tv", "/qr.svg")  # the big screen can be a TV on the Wi-Fi
@@ -192,6 +193,9 @@ class Director:
         self.last_karaoke = -3600.0
         self.old_mode = False   # the "Old songs" button: only the songs marked old play
         self.langs: set[str] = set()   # the Hindi / English / Punjabi buttons; empty = every language
+        self.theme: dict | None = None    # the "Play songs like…" box: what the host typed, read by theme.parse
+        self.theme_extra: set[str] = set()  # songs brought in from a YouTube Music playlist for it
+        self.dislikes: list[dict] = []    # 👎 songs: their singer is skipped, their kind plays less
         self._any_lang = False
         self.history: list[dict] = []         # every song played tonight, for the recap
         self.wishes: list[dict] = []          # guests' birthday wishes; the host approves each one
@@ -270,28 +274,45 @@ class Director:
     def auto_ok(self, s: Song) -> bool:
         """Songs the DJ may pick by itself: old songs only while the Old songs button is on,
         and only the languages picked with the language buttons."""
-        return self.playable(s) and not s.old and self.lang_ok(s)
+        return self.playable(s) and not s.old and self.lang_ok(s) and not self.avoided(s) \
+            and "theme" not in s.tags
+
+    def avoided(self, s: Song) -> bool:
+        """A singer the host gave a 👎 to isn't picked again (a request still plays)."""
+        return any(d["artist"] == norm(s.lead_artist) for d in self.dislikes)
+
+    def order(self, songs: list[Song]) -> list[Song]:
+        """Candidates in the order to try: with no language button on, the language the night has
+        had least of lately comes first (a real mix); songs like a 👎 one go last."""
+        if not self.langs and len({s.lang for s in songs}) > 1:
+            recent = [h.get("lang") for h in self.history[-10:] if h.get("lang")]
+            gap = lambda l: LANG_MIX.get(l, 0) - (recent.count(l) / len(recent) if recent else 0)
+            want = max({s.lang for s in songs}, key=gap)
+            songs = [s for s in songs if s.lang == want] + [s for s in songs if s.lang != want]
+        if self.dislikes:
+            kind = lambda s: sum(1 for d in self.dislikes if d["lang"] == s.lang and d["era"] == s.era)
+            songs = sorted(songs, key=kind)
+        return songs
 
     def pick_by_tier(self, tier) -> Song | None:
         pool = [s for s in self.everything if self.auto_ok(s)]
         if tier == FIRE:  # Crescendo: 5 stars only, and once they've all played, the best of them again
             fire = [s for s in pool if s.energy == 5]
-            return self.lean(fire) if fire else self.encore(energy=5)
+            return self.lean(self.order(fire)) if fire else self.encore(energy=5)
         for t in (tier, tier - 1 if tier > 1 else 2, tier + 1):
             same = [s for s in pool if s.energy == t]
             if same:
-                return same[0]
+                return self.order(same)[0]
         return pool[0] if pool else None
 
     def pick_auto(self) -> Song | None:
         phase = self.phase_now()
         planned = [s.song for s in self.slots if s.phase == phase and self.auto_ok(s.song)]
-        if planned:
-            return self.lean(planned)
         energies = PHASE_RULES[phase]["energies"]
-        fits = [s for s in self.everything if self.auto_ok(s) and s.energy in energies]
+        keys = {s.key for s in planned}
+        fits = planned + [s for s in self.everything if self.auto_ok(s) and s.energy in energies and s.key not in keys]
         if fits:
-            return self.lean(fits)
+            return self.lean(self.order(fits))
         rest = [s for s in self.everything if self.auto_ok(s)]
         return rest[0] if rest else None
 
@@ -321,6 +342,10 @@ class Director:
                 return r["song"], "guest"
         if fire:
             return self.pick_by_tier(FIRE), "fire"
+        if self.theme:
+            song = self.theme_pick()
+            if song:
+                return song, "theme"
         if self.old_mode:
             olds = [s for s in self.everything if s.old and self.playable(s) and self.lang_ok(s)]
             if olds:
@@ -404,7 +429,7 @@ class Director:
                 elif why == "guest":
                     r = self.guest_reqs.pop(song.key)
                     names, to = r["names"], r.get("to", "")
-                elif why in ("boost", "hold", "fire"):
+                elif why in ("boost", "hold", "fire", "theme"):
                     self.one_shot_tier = None
             if song is None:
                 return {"done": True}
@@ -463,6 +488,7 @@ class Director:
             print(f"{dt.datetime.now():%I:%M %p}  ▶ {song.label()}  [{TIERS[song.energy]}]")
             self.history.append({"time": dt.datetime.now().strftime("%I:%M %p").lstrip("0"), "key": song.key,
                                  "title": song.title, "artist": song.lead_artist, "energy": song.energy,
+                                 "lang": song.lang,
                                  "reason": reason or "", "who": who_all(names) if names else "", "to": to})
             self.save_state()
             sing = None
@@ -490,7 +516,7 @@ class Director:
                 play, fade = self.cfg.birthday_song_play_seconds, self.cfg.crossfade_seconds
             return {
                 "vid": song.video_id, "title": song.title, "artist": song.lead_artist,
-                "tier": TIERS[song.energy], "start": start, "play": play, "fade": round(fade, 1),
+                "tier": TIERS[song.energy], "energy": song.energy, "start": start, "play": play, "fade": round(fade, 1),
                 "full": song.full, "announce": announce, "req": reason in ("guest", "request", "karaoke"),
                 "fx": self.pick_fx(prev, song, reason), "sing": sing,
                 "karaoke": [[round(a, 1), round(b, 1), w] for a, b, w in words if start <= b and a <= start + play],
@@ -711,6 +737,7 @@ class Director:
             self.mode = int(mode) if mode in ("1", "2", "3", "4", "5") else FIRE if mode == FIRE else "auto"
             if self.mode == FIRE:
                 self.old_mode = False
+                self.theme = None
                 left = sum(1 for s in self.everything if s.energy == 5 and self.auto_ok(s))
         if self.mode == FIRE:
             self.notice(f"🔥 Crescendo ON: only 5-star songs now ({left} left). Tap again to go back.")
@@ -736,15 +763,126 @@ class Director:
         self.notice("🎵 " + msg)
         return {"langs": sorted(self.langs), "msg": msg}
 
-    def set_song(self, key: str, energy: int | None, lang: str | None):
+    # ---------- "Play songs like…" ----------
+    def theme_pick(self) -> Song | None:
+        spec = self.theme
+        cands = [s for s in self.everything if self.playable(s) and not self.avoided(s)
+                 and (s.key in self.theme_extra or (spec["understood"] and theme.fits(spec, s)))
+                 and (spec["langs"] or spec["artists"] or self.lang_ok(s))]
+        if not cands:
+            return None
+        cands = self.order(cands)
+        return self.rng.choice(cands[:4])   # a little variety among the best few
+
+    def set_theme(self, text: str) -> dict:
+        """The host typed the kind of songs they want. Songs on the list that fit play first; when
+        there are few, a matching YouTube Music playlist tops them up."""
+        text = " ".join(text.split())[:120]
+        with self.lock:
+            if not text:
+                had, self.theme = self.theme, None
+                self.theme_extra = set()
+                if had:
+                    self.notice("🎯 Back to the normal mix.")
+                return {"theme": None, "msg": "Back to the normal mix"}
+            spec = theme.parse(text, [s.artist for s in self.everything])
+            self.theme, self.theme_extra = spec, set()
+            if self.mode == FIRE:
+                self.mode = "auto"
+            self.old_mode = False
+            local = sum(1 for s in self.everything if self.playable(s) and spec["understood"] and theme.fits(spec, s))
+        reading = theme.describe(spec)
+        if local < 15:
+            threading.Thread(target=self.theme_fetch, args=(spec,), daemon=True).start()
+        msg = f"🎯 Playing: {text} ({reading})" + (f", {local} songs on the list" if local else "")
+        msg += "" if local >= 15 else ". Looking for more on YouTube Music…"
+        self.notice(msg)
+        return {"theme": self.theme_view(), "msg": msg, "local": local}
+
+    def theme_fetch(self, spec: dict):
+        """Top the theme up from the best-matching YouTube Music playlist."""
+        if self._search_yt is None:
+            try:
+                from ytmusicapi import YTMusic
+                self._search_yt = YTMusic()
+            except Exception:
+                self._search_yt = self.yt
+        tracks, name = [], ""
+        for yt in dict.fromkeys([self._search_yt, self.yt]):
+            try:
+                for pl in (yt.search(spec["text"], filter="playlists", limit=5) or [])[:3]:
+                    pid = pl.get("browseId") or pl.get("playlistId")
+                    if not pid:
+                        continue
+                    got = yt.get_playlist(pid[2:] if pid.startswith("VL") else pid, limit=80).get("tracks") or []
+                    tracks = [x for x in got if x.get("videoId") and not x.get("isExplicit")
+                              and not title_looks_explicit(x.get("title") or "")]
+                    if len(tracks) >= 10:
+                        name = pl.get("title") or ""
+                        break
+                if tracks:
+                    break
+            except Exception as e:
+                print(f"  (playlist search for '{spec['text']}' failed: {type(e).__name__})")
+        if not tracks:
+            with self.lock:
+                if self.theme is spec:
+                    self.notice("🎯 YouTube Music had no playlist for that, so it's songs from the list only.")
+            return
+        langs = sorted(spec["langs"])
+        lang = langs[0] if len(langs) == 1 else ("en" if "intl" in spec["tags"] else "hi")
+        energy = min(spec["hi"], max(spec["lo"], 4))
+        added = 0
+        with self.lock:
+            if self.theme is not spec:
+                return  # the host has moved on
+            have = {s.key: s for s in self.everything}
+            for x in tracks[:60]:
+                artist = ", ".join(a.get("name", "") for a in x.get("artists") or []) or "?"
+                song = Song(x["title"], artist, lang, "?", energy, video_id=x["videoId"],
+                            seconds=x.get("duration_seconds"), tags=tuple(spec["tags"]) + ("theme",))
+                old = have.get(song.key)
+                if old:
+                    self.theme_extra.add(old.key)
+                    continue
+                if is_blocked(song, *self.blocked) or self.avoided(song):
+                    continue
+                self.everything.append(song)
+                self.theme_extra.add(song.key)
+                added += 1
+            self.notice(f"🎯 Added {added} songs from the YouTube Music playlist '{name}'.")
+
+    def theme_view(self) -> dict | None:
+        if not self.theme:
+            return None
+        return {"text": self.theme["text"], "reading": theme.describe(self.theme)}
+
+    # ---------- 👎 and ★ for the song that's playing ----------
+    def dislike(self, song: Song) -> str:
+        """The host removed the song that's playing: it's gone, its singer won't be picked again,
+        and songs of the same language and decade come up less."""
+        d = {"artist": norm(song.lead_artist), "lang": song.lang, "era": song.era, "title": song.title}
+        with self.lock:
+            self.dislikes.append(d)
+            self.blocked[1].append(song.title)
+        names = {"hi": "Hindi", "pa": "Punjabi", "en": "English"}
+        kind = f"{song.era} {names.get(song.lang, '')}".strip() if song.era not in ("?", "new") else names.get(song.lang, "")
+        msg = f"👎 Removed '{song.title}'. No more {song.lead_artist}, and fewer {kind} songs."
+        self.notice(msg)
+        return msg
+
+    def set_song(self, key: str, energy: int | None, lang: str | None) -> bool:
         """The host changed a song's stars or language on the songs page."""
+        found = False
         with self.lock:
             for s in self.everything:
                 if s.key == key:
+                    found = True
                     if energy is not None:
                         s.energy = energy
                     if lang is not None:
                         s.lang = lang
+        return found
 
     def add_score(self, score: int, source: str = "host"):
         with self.lock:
@@ -915,6 +1053,8 @@ class Director:
             on = self.old_mode
             if on and self.mode == FIRE:
                 self.mode = "auto"
+            if on:
+                self.theme = None
             left = sum(1 for s in self.everything if s.old and self.playable(s))
         if on:
             self.notice(f"📻 Old songs ON: {left} old songs left to play.")
@@ -1080,7 +1220,7 @@ class Director:
             return {
                 "mode": self.mode, "notices": self.notices, "vibe_due": self.vibe_due,
                 "scores": self.scores[-6:], "force_next": force, "old_mode": self.old_mode,
-                "langs": sorted(self.langs),
+                "langs": sorted(self.langs), "theme": self.theme_view(), "dislikes": len(self.dislikes),
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
                 "up_next": self.up_next(), "queue": self.queue_view(), "guest_url": guest_url(),
@@ -1109,7 +1249,7 @@ class Director:
             return None
         h = self.history[-1] if self.history else {}
         return {"title": self.current.title, "artist": self.current.lead_artist,
-                "who": h.get("who", ""), "to": h.get("to", "")}
+                "who": h.get("who", ""), "to": h.get("to", ""), "energy": self.current.energy}
 
 
 def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
@@ -1208,6 +1348,23 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return self._json(director.old_toggle())
             if u.path == "/lang":
                 return self._json(director.lang_toggle(arg))
+            if u.path == "/theme":
+                return self._json(director.set_theme(arg))
+            if u.path == "/dislike":
+                # The song on the speaker, by name: the DJ has usually lined up the next one already.
+                cur = next((s for s in director.everything if s.key == norm(arg)), None) if arg else director.current
+                if not cur or cur.full:
+                    return self._json({"ok": False, "msg": "Nothing to remove right now."})
+                msg = director.dislike(cur)
+                songbook.remove(cur.title, quiet=True)  # off the list for good (it's in songs.yaml's history)
+                songbook.save_dislike(director.dislikes[-1])
+                return self._json({"ok": True, "msg": msg})
+            if u.path == "/undislike":
+                with director.lock:
+                    director.dislikes = []
+                songbook.save_dislike(None)
+                director.notice("👍 Forgot the 👎 choices: every singer can play again.")
+                return self._json({"ok": True})
             if u.path == "/karaoke":
                 return self._json({"msg": director.karaoke_now()})
             if u.path == "/hype":
@@ -1275,6 +1432,7 @@ def run(cfg, yt, plan, playlist_link: str | None, config_path: str, songs_path: 
     if resume:
         director.resume(resume)
     book = Songbook(songs_path, yt, director)
+    director.dislikes = book.dislikes()
     book.page_title = f"{event.title(cfg)} songs"
     url = serve(director, book, public)
     if on_ready:
@@ -1328,7 +1486,13 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  #stop{background:#b71c1c} #fullbtn{background:#1565c0} #skip{background:#455a64}
  #firebtn{background:linear-gradient(90deg,#ff6f00,#e53935,#d81b60);font-size:24px} #firebtn.on{box-shadow:0 0 0 3px #fff,0 0 24px #ff6f00}
  .lang{font-size:18px;padding:14px 20px;border-radius:14px;border:2px solid #555;background:transparent;color:var(--txt);cursor:pointer;min-width:96px}
- .lang.on{background:#2e7d32;border-color:#fff;color:#fff} #mic.on{background:var(--pink);animation:pulse 1s infinite}
+ .lang.on{background:#2e7d32;border-color:#fff;color:#fff}
+ #rate{margin-top:8px;display:flex;gap:4px;justify-content:center;align-items:center;flex-wrap:wrap}
+ #rate .rl{color:var(--dim);margin-right:4px} #rate button[data-s]{font-size:30px;background:none;border:0;color:#555;cursor:pointer;padding:0 2px}
+ #rate button.on{color:#ffd54f} #dislike{font-size:15px;padding:8px 12px;border-radius:10px;border:0;background:#4e342e;color:#fff;margin-left:12px;cursor:pointer}
+ .chips button{font-size:14px;padding:8px 12px;border-radius:20px;border:1px solid #555;background:transparent;color:var(--txt);cursor:pointer}
+ #themenow{display:none;margin-top:10px;padding:10px;border-radius:12px;background:#1b5e20;color:#fff}
+ #themenow button{margin-left:10px;font-size:14px;padding:6px 10px;border-radius:8px;border:0;background:#fff;color:#1b5e20;cursor:pointer} #mic.on{background:var(--pink);animation:pulse 1s infinite}
  @keyframes pulse{50%{opacity:.6}}
  h1{margin:8px 0} .card{background:var(--card);border-radius:16px;padding:16px;margin:12px 0}
  #start{font-size:34px;padding:22px 60px;border-radius:20px;border:0;background:var(--pink);color:#fff;cursor:pointer;margin:30px}
@@ -1383,18 +1547,28 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="netdown">📡 The internet dropped. The DJ will carry on by itself as soon as it's back.</div>
 <div id="ui" hidden><div id="left">
  <div class="card"><div id="countdown"></div><div id="phase" style="color:var(--dim)"></div>
-  <div id="title">…</div><div id="artist"></div><div id="reqby"></div><div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div></div>
+  <div id="title">…</div><div id="artist"></div><div id="reqby"></div>
+  <div id="rate"><span class="rl">Stars:</span><button data-s="1">★</button><button data-s="2">★</button><button data-s="3">★</button><button data-s="4">★</button><button data-s="5">★</button>
+   <button id="dislike" title="Remove this song and play fewer like it">👎 Remove song</button></div><div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div></div>
  <div class="card" id="main"><div class="row">
   <button class="big" id="stop">⏹ Stop music</button>
   <button class="big" id="fullbtn">🎵 Play full song</button>
   <button class="big" id="skip">⏭ Next song</button></div></div>
- <div class="card"><b>What to play</b><div class="row" style="margin-top:10px">
+ <div class="card"><b>What to play</b>
+  <div class="row" style="margin-top:10px"><input id="themeq" placeholder="🎯 Play songs like… e.g. hit English dance songs 2000 to 2010" style="flex:1;min-width:220px">
+   <button class="act" id="themeb" style="background:var(--pink)">Play these</button></div>
+  <div class="row chips" style="margin-top:8px">
+   <button data-q="Dance songs from Bollywood movies">Bollywood dance</button><button data-q="Hit dance songs of Punjabi singers">Punjabi hits</button>
+   <button data-q="Hit English dance songs from 2000 to 2010">English 2000s dance</button><button data-q="Spanish and international party hits">Spanish &amp; international</button>
+   <button data-q="90s Bollywood dance songs">90s Bollywood</button><button data-q="Diwali songs">🪔 Diwali songs</button></div>
+  <div id="themenow"></div>
+  <div class="row" style="margin-top:10px">
   <button class="big" id="firebtn">🔥 Crescendo <small>5★ dance songs only</small></button></div>
   <div class="row" style="margin-top:10px">
-  <button class="lang" data-l="hi">Hindi</button><button class="lang" data-l="pa">Punjabi</button><button class="lang" data-l="en">English</button>
+  <button class="lang" data-l="hi">Hindi</button><button class="lang" data-l="pa">Punjabi</button><button class="lang" data-l="en">English &amp; international</button>
   <button class="act" id="oldbtn" style="background:#8d6e63">📻 Old songs</button>
   <button class="act" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button></div>
-  <div style="color:var(--dim);font-size:13px;margin-top:6px">Tap a language to play only those songs. Tap it again to go back to every language.</div>
+  <div style="color:var(--dim);font-size:13px;margin-top:6px">Tap a language to play only those songs. With none on, the DJ plays a mix of all three.</div>
   <div style="margin-top:14px;color:var(--dim)">Or pick the vibe</div><div class="row" style="margin-top:6px">
   <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
   <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
@@ -1614,6 +1788,10 @@ async function load(){
       $('qr').innerHTML = '<img alt="QR code" width="180" height="180" src="/qr.svg?'+Date.now()+'">'; }
     if(s.force_next && cur) pendingForce = true;
     $('firebtn').classList.toggle('on', s.mode === 'fire');
+    $('themenow').style.display = s.theme ? 'block' : 'none';
+    if(s.theme) $('themenow').innerHTML = '🎯 Playing: <b>'+esc(s.theme.text)+'</b><br><small>'+esc(s.theme.reading)+'</small><button id="themeclear">✕ Back to the normal mix</button>';
+    if(s.theme) $('themeclear').onclick = () => setTheme2('');
+    showStars();
     $('firebtn').innerHTML = s.mode === 'fire' ? '🔥 Crescendo: ON <small>tap to go back to the normal mix</small>' : '🔥 Crescendo <small>5★ dance songs only</small>';
     document.querySelectorAll('.lang').forEach(b => b.classList.toggle('on', (s.langs||[]).includes(b.dataset.l)));
     $('oldbtn').textContent = s.old_mode ? '📻 Old songs: ON' : '📻 Old songs';
@@ -1731,6 +1909,25 @@ $('karabtn').onclick = async ()=>{ $('karabtn').disabled = true;
 $('oldbtn').onclick = async ()=>{ $('oldbtn').disabled = true;
   try { const r = await post('/old'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
   $('oldbtn').disabled = false; };
+// ★ and 👎 for the song that's playing
+let shownStars = 0;
+function showStars(){ shownStars = cur ? (cur.energy || 0) : 0; document.querySelectorAll('#rate button[data-s]').forEach(b => b.classList.toggle('on', +b.dataset.s <= shownStars)); }
+document.querySelectorAll('#rate button[data-s]').forEach(b => b.onclick = async ()=>{
+  if(!cur) return; const n = +b.dataset.s; cur.energy = n; showStars();
+  try { const r = await post('/api/songs/set?'+new URLSearchParams({title: cur.title, energy: n})); toast(r.msg); } catch(e){ $('down').style.display='block'; } });
+$('dislike').onclick = async ()=>{
+  if(!cur || cur.full) return;
+  if(!confirm('Remove "'+cur.title+'" and play fewer songs like it?')) return;
+  try { const r = await post('/dislike?v='+encodeURIComponent(cur.title)); toast(r.msg);
+    if(r.ok){ if(upcoming && !upcoming.req){ post('/putback?v='+upcoming.vid); upcoming = null; } next(false); } load(); }
+  catch(e){ $('down').style.display='block'; } };
+// 🎯 Play songs like…: the kind of songs, in your own words
+async function setTheme2(q){
+  try { const r = await post('/theme?v='+encodeURIComponent(q)); toast(r.msg);
+    if(q){ $('themeq').value = ''; await karaNow(); } load(); } catch(e){ $('down').style.display='block'; } }
+$('themeb').onclick = () => { const q = $('themeq').value.trim(); if(q) setTheme2(q); };
+$('themeq').onkeydown = e => { if(e.key === 'Enter') $('themeb').click(); };
+document.querySelectorAll('.chips button').forEach(b => b.onclick = () => setTheme2(b.dataset.q));
 $('firebtn').onclick = async ()=>{ $('firebtn').disabled = true;
   try { const on = !$('firebtn').classList.contains('on');
     await post('/mode?v='+(on ? 'fire' : 'auto')); toast(on ? '🔥 Crescendo! Only 5-star songs now' : 'Back to the normal mix');

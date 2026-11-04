@@ -12,7 +12,7 @@ class ConfigError(ValueError):
     pass
 
 
-OLD_DEFAULTS = {"en-US-AndrewNeural": "en-US-AndrewMultilingualNeural"}
+OLD_DEFAULTS = {"en-US-AndrewNeural": "en-IN-PrabhatNeural", "en-US-AndrewMultilingualNeural": "en-IN-PrabhatNeural"}
 
 
 @dataclass
@@ -30,10 +30,10 @@ class Config:
     blocked_artists: list[str] = field(default_factory=list)
     blocked_tracks: list[str] = field(default_factory=list)
     requested_tracks: list[str] = field(default_factory=list)
-    dj_voice: str = "en-US-AndrewMultilingualNeural"
+    dj_voice: str = "en-IN-PrabhatNeural"
     name_pronunciations: dict = field(default_factory=dict)
     hindi_voice: str = "hi-IN-MadhurNeural"
-    hindi_announcement_share: float = 0.5
+    hindi_announcement_share: float = 0.0
     song_play_min_seconds: int = 90
     song_play_max_seconds: int = 150
     crossfade_seconds: int = 6
@@ -114,10 +114,11 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         blocked_artists=[str(x) for x in raw.get("blocked_artists") or []],
         blocked_tracks=[str(x) for x in raw.get("blocked_tracks") or []],
         requested_tracks=[str(x) for x in raw.get("requested_tracks") or []],
-        # A party file saved before Nov 2026 still has the old defaults: move it to the new voice.
-        dj_voice=OLD_DEFAULTS.get(str(raw.get("dj_voice")), str(raw.get("dj_voice") or "en-US-AndrewMultilingualNeural")),
+        # A party file saved earlier still has an old default voice: move it to the current one.
+        dj_voice=OLD_DEFAULTS.get(str(raw.get("dj_voice")), str(raw.get("dj_voice") or "en-IN-PrabhatNeural")),
         hindi_voice=str(raw.get("hindi_voice") or "hi-IN-MadhurNeural"),
-        hindi_announcement_share=0.5 if raw.get("hindi_announcement_share") in (None, 0.35)
+        # Nov 2026 (Suman): English only; the Hindi voice didn't work out. Old files had 0.35 or 0.5.
+        hindi_announcement_share=0.0 if raw.get("hindi_announcement_share") in (None, 0.35, 0.5)
         else float(raw["hindi_announcement_share"]),
         name_pronunciations={str(k): str(v) for k, v in (raw.get("name_pronunciations") or {}).items()},
         song_play_min_seconds=int(raw.get("song_play_min_seconds", 90)),

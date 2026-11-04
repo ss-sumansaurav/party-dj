@@ -77,7 +77,7 @@ If `python dj.py --check-auth` starts failing, repeat steps 1 to 6. Re-check the
 | `song_play_min_seconds`, `song_play_max_seconds` | Every song plays between these lengths (default 90 to 150 seconds); the DJ mixes out at a pause in the singing |
 | `crossfade_seconds` | Length of the smooth blend between songs (default 6) |
 | `dj_voice` | The DJ's voice (a young male neural voice by default; needs internet when announcements are made) |
-| `hindi_voice`, `hindi_announcement_share` | Voice for the Hindi and Hinglish announcements, and how many of them (0.5 = half) |
+| `hindi_voice`, `hindi_announcement_share` | Voice for Hindi announcements, and how many of them (0 = English only) |
 | `name_pronunciations` | How the voice should say names (e.g. `Ketan: Kaytun`) |
 | `blocked_artists`, `blocked_tracks`, `requested_tracks` | Edit any time, before or during the party |
 
@@ -87,8 +87,8 @@ The pool the DJ picks from: title, artist, language (`hi`, `pa`, `en`), era and 
 score from 1 (mellow) to 5 (floor-filler). Add or remove lines freely. The planner never
 repeats a song, keeps English at or under the configured share, skips anything YouTube Music
 flags as explicit (or whose title looks explicit), and drops blocked artists and tracks.
-About 430 songs: Hindi, Punjabi and English (Spanish and other international hits count as
-English). Every song on the list is energy 3 or more (Suman cut the slow ones). Songs with energy 1 (one dot) are never played, unless someone requests
+About 460 songs: Hindi, Punjabi and English (Spanish and other international hits, tagged
+`intl`, count as English). Every song on the list is energy 3 or more (Suman cut the slow ones). Songs with energy 1 (one dot) are never played, unless someone requests
 one. The last block of songs is party bangers in the style Bollywood club DJs like DJ Akhil
 Talreja and DJ Suketu are known for.
 
@@ -179,10 +179,10 @@ python dj.py
    touches come through build-ups, drops, scratches and sing-along moments rather than
    remixing the songs themselves.
 5. **Announcements** every few songs, spoken over the start of a song with the music turned
-   down, in a natural-sounding young male voice that says each line in one go (a little
-   brighter for the big songs, calmer for slow ones). If a name sounds off, change its
-   spelling under `name_pronunciations` in `config.yaml`. About half the announcements come
-   out in Hindi or Hinglish in a Hindi voice (`hindi_announcement_share`), half in English.
+   down, in English, in an Indian English voice (en-IN-PrabhatNeural) with the lingo of a desi
+   club DJ ("chalo", "haath upar", "balle balle"). Each line is said in one go. If a name
+   sounds off, change its spelling under `name_pronunciations` in `config.yaml`. Hindi
+   announcements are off (`hindi_announcement_share: 0`).
 6. **Pick the vibe:** Auto follows the plan for the time of night. Chill, Groove, Dance,
    Bangers or On fire switch the music to that energy from the next song, until you pick
    Auto again.
@@ -272,11 +272,24 @@ python dj.py
 28. **Main buttons up top:** ⏹ Stop music, 🎵 Play full song and ⏭ Next song sit in one big
     row right under what's playing. Below them is **What to play** (Crescendo, languages, Old
     songs, Karaoke, the vibe), then requests, then everything else.
-29. **Hindi / Punjabi / English buttons:** tap one (or two) and only songs in those languages
-    play, until you tap it again. If a language runs out, the DJ carries on with the others.
+29. **Hindi / Punjabi / English & international buttons:** tap one (or two) and only songs in
+    those languages play, until you tap it again. If a language runs out, the DJ carries on with
+    the others. With none on, the DJ mixes all three (about 45% Hindi, 25% Punjabi, 30% English
+    and international). Spanish and other international hits (tagged `intl`) count as English.
 30. **🔥 Crescendo:** only 5-star songs, starting straight away, to take the party to its peak.
     Guest requests below 5 stars wait until you tap it off.
-31. **Comes in on the beat:** songs skip the slow intro. With YouTube Music's timed lyrics the
+31. **🎯 Play songs like…:** type the kind of songs you want in your own words ("hit English
+    dance songs from 2000 to 2010", "Dance songs from Bollywood movies", "Diljit", "90s
+    Bollywood", "Diwali songs"), or tap a quick pick. The DJ reads the words for languages,
+    years, energy and singers, plays the songs on the list that fit, and when there are fewer
+    than 15 it adds tracks from a matching YouTube Music playlist. ✕ goes back to the normal mix.
+32. **Stars and 👎 on the main screen:** tap 1–5 stars under the song that's playing to rate it.
+    **👎 Remove song** takes it off the list, skips to the next song, and remembers: that singer
+    isn't picked again and songs of the same language and decade come up less. The songs page
+    lists them, with **Forget these** to undo.
+33. **Diwali songs:** the songs tagged `diwali` (Jalte Diye, Kabhi Khushi Kabhie Gham, Ram
+    Aayenge, Mere Ghar Ram Aaye Hain) play in the mix and with the 🪔 Diwali songs pick.
+34. **Comes in on the beat:** songs skip the slow intro. With YouTube Music's timed lyrics the
     DJ starts a few seconds before the first chorus (when it comes within 20–110 seconds);
     otherwise about 15 seconds in. Requests start near the top (at most 15 seconds in).
 

@@ -81,7 +81,7 @@ jobs:
           import yaml
           from pathlib import Path
           cfg = yaml.safe_load(open("config.yaml"))
-          for voice, text in ((cfg["dj_voice"], "Happy Diwali, everybody! Welcome to Amit and Priya's Diwali party. Let's go!"),
+          for voice, text in ((cfg["dj_voice"], "Happy Diwali, everybody! Welcome to Amit and Priya's Diwali party. Chalo, let's get this party started!"),
                               (cfg["hindi_voice"], "हाथ ऊपर! Happy Diwali, क्या party है!")):
               out = Path("voice_check") / voice
               out.parent.mkdir(exist_ok=True)
