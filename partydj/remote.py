@@ -22,7 +22,7 @@ SCRIPT = r"""
   }
   function label(el){ return (el.innerText || el.value || el.placeholder || el.id || el.tagName).trim().slice(0, 40); }
   function typing(el, dx){   // inside a text box, left/right move the cursor
-    if (!el) return false;
+    if (!el || (el.readOnly && el.type !== 'range')) return false;   // not typing yet: arrows move on
     if (el.tagName === 'TEXTAREA') return true;
     if (el.tagName === 'INPUT' && !/^(button|submit|checkbox|radio|range|color|file)$/.test(el.type)) return dx !== 0;
     if (el.tagName === 'INPUT' && el.type === 'range') return dx !== 0;
@@ -32,8 +32,18 @@ SCRIPT = r"""
     const els = [...document.querySelectorAll(SEL)].filter(shown);
     return document.getElementById('start') && shown(document.getElementById('start')) ? document.getElementById('start') : els[0];
   }
+  // A TV pops its keyboard up as soon as a text box gets focus, and the keyboard then takes the
+  // arrow keys. So a box reached with the arrows is read-only until OK is pressed on it.
+  function textBox(el){
+    return el && (el.tagName === 'TEXTAREA' ||
+      (el.tagName === 'INPUT' && !/^(button|submit|checkbox|radio|range|color|file|date|time)$/.test(el.type)));
+  }
   function go(el){
     if (!el) return;
+    if (textBox(el) && !el.readOnly) {
+      el.readOnly = true; el.dataset.dpadRo = '1';
+      el.addEventListener('blur', () => { if (el.dataset.dpadRo) { el.readOnly = false; delete el.dataset.dpadRo; } }, {once: true});
+    }
     el.focus({preventScroll: true});
     el.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'smooth'});
     log('focus: ' + label(el));
@@ -41,6 +51,11 @@ SCRIPT = r"""
   document.addEventListener('keydown', e => {
     const d = DIRS[e.key];
     const a = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+    if (e.key === 'Enter' && a && a.dataset && a.dataset.dpadRo) {   // OK on a text box: now type
+      e.preventDefault(); delete a.dataset.dpadRo; a.readOnly = false; a.blur(); a.focus();
+      const n = (a.value || '').length; try { a.setSelectionRange(n, n); } catch(err){}
+      return;
+    }
     if (e.key === 'Enter' && a && (a.matches('input[type=radio], input[type=checkbox]') ||
         (a.matches('[tabindex]') && !a.matches('button, a, input, select, textarea')))) {
       e.preventDefault(); a.click(); return;
