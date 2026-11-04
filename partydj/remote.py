@@ -75,7 +75,8 @@ SCRIPT = r"""
                          : (d[1] > 0 ? r.top - from.bottom : from.top - r.bottom);
       const cx = r.left + r.width/2, cy = r.top + r.height/2;
       const ahead = d[0] ? (cx - fx) * d[0] : (cy - fy) * d[1];
-      if (ahead <= 2 || along < -Math.min(r.width, r.height) / 2) continue;
+      const step = Math.max(2, (d[0] ? from.width : from.height) * 0.3);   // things on the same row/column don't count
+      if (ahead <= step || along < -Math.min(r.width, r.height) / 2) continue;
       const side = d[0] ? Math.max(0, Math.max(r.top - from.bottom, from.top - r.bottom))
                         : Math.max(0, Math.max(r.left - from.right, from.left - r.right));
       const score = Math.max(0, along) + side * 3 + (d[0] ? Math.abs(cy - fy) : Math.abs(cx - fx)) * 0.3;
