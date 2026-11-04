@@ -25,7 +25,8 @@ It never downloads or re-hosts audio, and never types your Google password anywh
 python dj.py --setup
 ```
 
-It asks what kind of party (Birthday or Diwali), the host's and co-host's names, the city,
+It asks what kind of party (Birthday or Diwali), the host's and co-host's names (shown on screen;
+the DJ never says them, so any party can use the same recordings), the city,
 the date, start time, how long, and for Diwali the time of the **Diwali moment**. It saves
 everything in its own file, like `party-diwali-anita.yaml`, and gives the party **its own
 YouTube Music sign-in** (`browser-diwali-anita.json`), so your usual account is never used.
@@ -296,3 +297,11 @@ python dj.py
 Stop with Ctrl-C in Terminal. You can rehearse on any day: it runs the same way, with the
 birthday block the same distance from when you click START. (`python dj.py --live` does the
 same thing as `python dj.py`.)
+
+## Recorded DJ voice (optional)
+
+`python3 dj.py --config <your Diwali party file> --voice-pack` records the DJ's fixed Diwali lines
+with ElevenLabs (free tier is enough; it asks for your `sk_…` API key and never prints it). The lines
+name no one, so the recording works for any Diwali party. Lines already recorded in the same voice are
+kept, so a re-run only records new or changed lines. Song names, requesters and wishes are still read
+by the computer voice.

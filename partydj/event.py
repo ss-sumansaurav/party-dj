@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from . import announcer
 
-# The DJ's lines for a Diwali party. {hosts} is "Host and Co-host", {city} where the party is.
+# The DJ's lines for a Diwali party. They never name the hosts (Suman: the app must work for any party);
+# {city} is where the party is.
 DIWALI_LINES = {
     # Said like a smart Indian club DJ: English, with the odd Hindi word everyone at the party uses.
     "opening": [
-        "Happy Diwali, everybody! Welcome to {hosts}'s Diwali party{in_city}. I'm your DJ for tonight. Diyas are lit, the vibe is set, so chalo, let's get this party started!",
+        "Happy Diwali, everybody! Welcome to the Diwali party{in_city}. I'm your DJ for tonight. Diyas are lit, the vibe is set, so chalo, let's get this party started!",
     ],
     "Warm-up": [
         "Easing into the festive mood with a proper classic. Sing along, this is {next}!",
@@ -17,7 +18,7 @@ DIWALI_LINES = {
     ],
     "Build": [
         "Arre wah, I see some moves already! Let's keep it going, this is {next}!",
-        "Now we're talking! {host}, get everyone on the floor. This one's {next}!",
+        "Now we're talking! Chalo, everyone on the floor. This one's {next}!",
         "The energy is building, I love it! Coming up, {next}!",
         "Full josh now, everybody! Let's go, {next}!",
     ],
@@ -68,7 +69,7 @@ DIWALI_LINES = {
         "I can't hear you! Sing it with me, everybody!",
     ],
     "hype": [
-        "Make some noise for {hosts}! Louder! Let me hear you!",
+        "Make some noise for our amazing hosts! Louder! Let me hear you!",
         "Everybody, haath upar! Happy Diwali, what a party!",
     ],
     "cake_10": [
@@ -78,22 +79,22 @@ DIWALI_LINES = {
         "Just five minutes to go! Everybody gather round, our Diwali moment is almost here!",
     ],
     "birthday_intro": [
-        "Can I have everyone's attention, please? Gather round, diyas ready. It's our Diwali moment with {hosts}!",
+        "Can I have everyone's attention, please? Gather round, diyas ready. It's our Diwali moment!",
     ],
     "cake": [
         "Three, two, one! Happy Diwali, everybody! Shubh Deepavali!",
     ],
     "shoutout": [
-        "Happy Diwali{city_shout}! A big thank you to {hosts} for bringing everyone together tonight!",
+        "Happy Diwali{city_shout}! A big thank you to our hosts for bringing everyone together tonight!",
     ],
     "closing": [
-        "You were all amazing tonight! Happy Diwali once again. {hosts}, thank you for this lovely party. Good night, everybody!",
+        "You were all amazing tonight! Happy Diwali once again, and a big thank you to our hosts for this lovely party. Good night, everybody!",
     ],
 }
 
 DIWALI_LINES_HI = {
     "opening": [
-        "Happy Diwali, everybody! {hosts_hi} की Diwali party{in_city_hi} में आप सबका स्वागत है. मैं हूँ आपका DJ. तो चलो, party शुरू करते हैं!",
+        "Happy Diwali, everybody! Diwali party{in_city_hi} में आप सबका स्वागत है. मैं हूँ आपका DJ. तो चलो, party शुरू करते हैं!",
     ],
     "Warm-up": [
         "शुभ दीपावली! अब आ रहा है एक evergreen गाना, {next}!",
@@ -101,7 +102,7 @@ DIWALI_LINES_HI = {
     ],
     "Build": [
         "अरे वाह, dance floor गरम हो रहा है! रुकना नहीं है, ये है {next}!",
-        "{host} जी, सबको floor पे लाइए! आ गया {next}!",
+        "चलो, सब floor पे आइए! आ गया {next}!",
     ],
     "Peak": [
         "हाथ ऊपर, पूरे ऊपर! ये है {next}!",
@@ -138,7 +139,7 @@ DIWALI_LINES_HI = {
         "सब मिलकर गाओ! ज़ोर से!",
     ],
     "hype": [
-        "{hosts_hi} के लिए ज़ोरदार तालियाँ! और ज़ोर से!",
+        "हमारे hosts के लिए ज़ोरदार तालियाँ! और ज़ोर से!",
         "हाथ ऊपर! Happy Diwali, क्या party है!",
     ],
     "cake_10": [
@@ -148,16 +149,16 @@ DIWALI_LINES_HI = {
         "बस पाँच मिनट! सब लोग पास आ जाओ, Diwali moment आने वाला है!",
     ],
     "birthday_intro": [
-        "सब लोग ध्यान दीजिए! पास आ जाइए, दीये तैयार रखिए. {hosts_hi} के साथ हमारा Diwali moment!",
+        "सब लोग ध्यान दीजिए! पास आ जाइए, दीये तैयार रखिए. हमारा Diwali moment आ गया!",
     ],
     "cake": [
         "तीन, दो, एक! सबको दीपावली की हार्दिक शुभकामनाएँ! Happy Diwali!",
     ],
     "shoutout": [
-        "दीपावली मुबारक! {hosts_hi}, इस शानदार पार्टी के लिए thank you!",
+        "दीपावली मुबारक! हमारे hosts को इस शानदार पार्टी के लिए thank you!",
     ],
     "closing": [
-        "आप सब कमाल के थे! एक बार फिर, Happy Diwali. {hosts_hi}, thank you. Good night, everybody!",
+        "आप सब कमाल के थे! एक बार फिर, Happy Diwali, और hosts को thank you. Good night, everybody!",
     ],
 }
 

@@ -29,9 +29,9 @@ SETTINGS = {"stability": 0.3, "similarity_boost": 0.8, "style": 0.7, "use_speake
 DEFAULT_VOICE = ("TX3LPaxmHKxFdv7VOQHJ", "Liam")   # a lively built-in voice, if listing voices isn't allowed
 LIKED = ("Liam", "Will", "Chris", "Josh", "Eric", "Charlie", "Brian", "Adam")
 
-# {hosts} = "Amit and Priya", {host} = "Amit", {city} = "Melbourne" (from the party's settings).
+# No names or places (Suman: the app must work for any party), so one recording fits every Diwali party.
 DIWALI = {
-    "opening": ["Happy Diwali, everybody! Welcome to {hosts}'s Diwali party{in_city}! I'm your DJ tonight, the diyas are lit, the vibe is set... so chalo, let's get this party started!"],
+    "opening": ["Happy Diwali, everybody! Welcome to the Diwali party! I'm your DJ tonight, the diyas are lit, the vibe is set... so chalo, let's get this party started!"],
     "Warm-up": [
         "Ohhh, this one's a classic! Sing along, everybody!",
         "Diyas glowing, food is ready, and the music is ON! Let's go!",
@@ -39,7 +39,7 @@ DIWALI = {
     ],
     "Build": [
         "Arre wah! I see some moves already! Keep it going!",
-        "{host}, get everyone on the floor! Come on, come on!",
+        "Chalo, everyone on the floor! Come on, come on!",
         "The energy is building, and I LOVE it!",
         "Full josh now, everybody! Let's gooo!",
     ],
@@ -52,7 +52,7 @@ DIWALI = {
     "Peak 2": [
         "Thought we were done? No way! The night is still young!",
         "This Diwali party is next level! Don't stop now!",
-        "Let me hear you{city_shout}! Make some noise!",
+        "Let me hear you, everybody! Make some noise!",
         "Ekdum full power! Here we go again!",
     ],
     "Wind-down": [
@@ -73,37 +73,20 @@ DIWALI = {
     "karaoke": ["Karaoke time! The words are on the screen, so sing it LOUD!",
                 "Tonight, YOU are the singer! Everybody, sing along!"],
     "sing_along": ["This one is yours! Everybody sing!", "I can't hear you! Sing it with me!"],
-    "hype": ["Make some noise for {hosts}! Louder! Let me hear you!",
+    "hype": ["Make some noise for our amazing hosts! Louder! Let me hear you!",
              "Everybody, haath upar! Happy Diwali, what a party!"],
     "cake_10": ["Ten minutes to our Diwali moment! Find your family and friends, and get ready!"],
     "cake_5": ["Just five minutes to go! Everybody gather round, our Diwali moment is almost here!"],
-    "birthday_intro": ["Can I have everyone's attention, please? Gather round, diyas ready... it's our Diwali moment with {hosts}!"],
+    "birthday_intro": ["Can I have everyone's attention, please? Gather round, diyas ready... it's our Diwali moment!"],
     "cake": ["Three... two... one... HAPPY DIWALI, everybody! Shubh Deepavali!"],
-    "shoutout": ["Happy Diwali{city_shout}! A big, big thank you to {hosts} for bringing everyone together tonight!"],
-    "closing": ["You were all amazing tonight! Happy Diwali once again. {hosts}, thank you for this lovely party. Good night, everybody!"],
+    "shoutout": ["Happy Diwali, everybody! A big, big thank you to our hosts for bringing everyone together tonight!"],
+    "closing": ["You were all amazing tonight! Happy Diwali once again, and a big thank you to our hosts for this lovely party. Good night, everybody!"],
 }
 
 
-def _hosts(cfg) -> str:
-    return f"{cfg.host_name} and {cfg.co_host_name}" if getattr(cfg, "co_host_name", "") else cfg.host_name
-
-
-def _first(name: str) -> str:
-    return (str(name).lower().split() or [""])[0]
-
-
-def _first_names(hosts: str) -> set[str]:
-    """'AMIT and APARNA' -> {'amit', 'aparna'}"""
-    return {_first(h) for h in str(hosts).lower().replace(" & ", " and ").split(" and ") if h.strip()}
-
-
-def lines_for(cfg) -> list[tuple[str, str]]:
-    """(kind, words) for this party, names filled in."""
-    hosts = _hosts(cfg)
-    city = (getattr(cfg, "city", "") or "").strip()
-    words = {"hosts": hosts, "host": cfg.host_name, "in_city": f" in {city}" if city else "",
-             "city_shout": f", {city}" if city else ""}
-    return [(kind, text.format(**words)) for kind, texts in DIWALI.items() for text in texts]
+def lines_for(cfg=None) -> list[tuple[str, str]]:
+    """(kind, words): the same for every Diwali party."""
+    return [(kind, text) for kind, texts in DIWALI.items() for text in texts]
 
 
 # ---------- playing them on the night ----------
@@ -117,16 +100,13 @@ class Pack:
         except (OSError, ValueError):
             data = {}
         self.clips: dict[str, list[dict]] = data.get("clips", {})
-        self.hosts = str(data.get("hosts", ""))
         self.why_not = ""
-        if cfg is not None and self.clips:
-            if getattr(cfg, "party_type", "") != "diwali":
-                self.why_not = "it was recorded for a Diwali party"
-            elif _first(cfg.host_name) not in _first_names(self.hosts):
-                # recorded for another party: its names would be wrong
-                self.why_not = f"it was recorded for {' and '.join(h.strip().title() for h in self.hosts.split(' and '))}'s party; this party's host is {cfg.host_name}"
-            if self.why_not:
-                self.clips = {}
+        if cfg is not None and self.clips and getattr(cfg, "party_type", "") != "diwali":
+            self.why_not = "it was recorded for a Diwali party"
+            self.clips = {}
+        # Only clips of today's script: older ones named the hosts, so they're left out.
+        script = {t for _, t in lines_for()}
+        self.clips = {k: [c for c in v if c.get("text") in script] for k, v in self.clips.items()}
         self.clips = {k: [c for c in v if (folder / c["file"]).exists()] for k, v in self.clips.items()}
         self.turn: dict[str, int] = {}
         self.rng = random.Random()
@@ -240,7 +220,13 @@ def record(cfg) -> int:
         print("  python3 dj.py --config party-diwali-amit.yaml --voice-pack")
         return 1
     lines = lines_for(cfg)
-    chars = sum(len(t) for _, t in lines)
+    try:   # lines already recorded in the same voice are kept, so only new ones use up characters
+        old = json.loads((PACK / "lines.json").read_text())
+    except (OSError, ValueError):
+        old = {}
+    have = {c["text"]: PACK / c["file"] for v in old.get("clips", {}).values() for c in v
+            if (PACK / c["file"]).exists()}
+    chars = sum(len(t) for _, t in lines if t not in have)
     key = _key()
     if not key:
         print("No key, nothing recorded.")
@@ -248,12 +234,12 @@ def record(cfg) -> int:
     try:
         sub = json.loads(_call("/user/subscription", key))
         left = sub.get("character_limit", 0) - sub.get("character_count", 0)
-        print(f"These {len(lines)} lines use about {chars:,} characters; your account has {left:,} left this month.")
+        print(f"These lines use about {chars:,} characters; your account has {left:,} left this month.")
         if left < chars:
             print("Not enough left this month. Try again when it resets, or shorten the list.")
             return 1
     except urllib.error.HTTPError:
-        print(f"These {len(lines)} lines use about {chars:,} characters (the free tier gives 10,000 a month).")
+        print(f"These lines use about {chars:,} characters (the free tier gives 10,000 a month).")
     for attempt in (1, 2):
         try:
             voice_id, name = _choose_voice(key)
@@ -277,6 +263,11 @@ def record(cfg) -> int:
     print(f"\nRecording {len(lines)} lines in {name}'s voice…")
     for i, (kind, text) in enumerate(lines, 1):
         fname = f"{i:02d}_{kind.replace(' ', '_').lower()}.mp3"
+        if text in have and old.get("voice") == name:
+            shutil.copy(have[text], tmp / fname)
+            index.setdefault(kind, []).append({"file": fname, "text": text})
+            print(f"  = {i}/{len(lines)}  already recorded: {text[:50]}")
+            continue
         try:
             audio = _call(f"/text-to-speech/{voice_id}?output_format=mp3_44100_128", key,
                           {"text": text, "model_id": MODEL, "voice_settings": SETTINGS})
@@ -289,7 +280,7 @@ def record(cfg) -> int:
         (tmp / fname).write_bytes(audio)
         index.setdefault(kind, []).append({"file": fname, "text": text})
         print(f"  ✓ {i}/{len(lines)}  {text[:60]}")
-    (tmp / "lines.json").write_text(json.dumps({"voice": name, "hosts": _hosts(cfg), "clips": index},
+    (tmp / "lines.json").write_text(json.dumps({"voice": name, "clips": index},
                                                ensure_ascii=False, indent=1))
     shutil.rmtree(PACK, ignore_errors=True)
     tmp.rename(PACK)

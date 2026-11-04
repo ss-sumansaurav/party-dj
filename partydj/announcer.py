@@ -11,7 +11,7 @@ MAX_WORDS = 32  # about 15 seconds of speech
 
 LINES = {
     "opening": [
-        "Yo NaAhAr, what's good! Welcome to {name}'s birthday party. I'm your DJ tonight, and {host} said no holding back. So let's get this party started!",
+        "Yo NaAhAr, what's good! Welcome to {name}'s birthday party. I'm your DJ tonight, and I was told no holding back. So let's get this party started!",
     ],
     "Warm-up": [
         "Alright alright, we're easing into it. Got a real classic for you. Sing it loud, this is {next}!",
@@ -22,7 +22,7 @@ LINES = {
     "Build": [
         "Ooh, I see you moving! The floor is warming up. Let's keep it going, {next}!",
         "Now we're talking! Eighties, nineties, all the hits. Get up, it's {next}!",
-        "{host}, get your crew on the floor. This one's {next}. Let's go!",
+        "Everybody, get your crew on the floor. This one's {next}. Let's go!",
         "The energy's building and I love it! Here comes {next}!",
     ],
     "Peak": [
@@ -82,7 +82,7 @@ LINES = {
     ],
     "hype": [
         "Make some noise for {name}! Louder! Let me hear you!",
-        "Everybody, hands up! Give it up for {host}, what a party!",
+        "Everybody, hands up! Give it up for our hosts, what a party!",
         "Nahar guys and gals, are you with me? Let me hear you scream!",
     ],
     "birthday_intro": [
@@ -92,10 +92,10 @@ LINES = {
         "Three, two, one! Cut that cake, {name}! Everybody together, happy birthday!",
     ],
     "shoutout": [
-        "Happy birthday {name}, you legend! Here's to an amazing year. And a huge shoutout to {host} for this incredible party!",
+        "Happy birthday {name}, you legend! Here's to an amazing year. And a huge shoutout to our hosts for this incredible party!",
     ],
     "closing": [
-        "NAHAR guys and gals, you were amazing tonight! Happy birthday once again, {name}. {host}, thank you for this party. Good night, everybody!",
+        "NAHAR guys and gals, you were amazing tonight! Happy birthday once again, {name}, and thank you to our hosts for this party. Good night, everybody!",
     ],
 }
 
@@ -115,7 +115,7 @@ LINES_HI = {
     ],
     "Build": [
         "अरे वाह, dance floor गरम हो रहा है! रुकना नहीं है, ये है {next}!",
-        "{host} जी, सबको floor पे लाइए! आ गया {next}!",
+        "चलो, सब floor पे आइए! आ गया {next}!",
         "Energy बढ़ रही है, मज़ा आ रहा है! चलो, {next}!",
     ],
     "Peak": [
@@ -178,7 +178,7 @@ LINES_HI = {
         "तीन, दो, एक! केक काटो, {name}! सब मिलकर, happy birthday!",
     ],
     "shoutout": [
-        "जन्मदिन मुबारक हो {name}! साल भर ख़ुशियाँ ही ख़ुशियाँ. और {host} जी, इस शानदार पार्टी के लिए thank you!",
+        "जन्मदिन मुबारक हो {name}! साल भर ख़ुशियाँ ही ख़ुशियाँ. और hosts को इस शानदार पार्टी के लिए thank you!",
     ],
 }
 HINDI_NAMES = {"Ketan": "केतन", "Poonam": "पूनम"}  # names as the Hindi voice should read them
