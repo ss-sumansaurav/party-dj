@@ -21,7 +21,7 @@ import urllib.parse
 import webbrowser
 from pathlib import Path
 
-from . import announcer, cuts, event, fx, theme
+from . import announcer, cuts, event, fx, theme, voicepack
 from .config import load_config
 from .planner import PHASE_RULES, Slot
 from .songbook import Songbook
@@ -212,6 +212,9 @@ class Director:
         self.opened = False
         self.writer = event.writer(cfg, seed=f"{cfg.party_date}-live")
         self.fixed: dict[str, str] = {}    # kind -> audio file name, made at start-up
+        self.pack = voicepack.Pack(cfg=cfg)  # the recorded human DJ voice, when there is one
+        if self.pack:
+            print("🎙 Using the recorded DJ voice (partydj/voice_pack).")
         self.n_audio = 0
 
     # ---------- helpers ----------
@@ -221,6 +224,10 @@ class Director:
             self.notices = ([f"{dt.datetime.now():%I:%M %p}  {text}"] + self.notices)[:10]
 
     def speak(self, kind: str, text: str, energy: int | None = None) -> dict | None:
+        clip = self.pack.pick(kind) if self.pack else None
+        if clip:  # the recorded voice: it never names the song, the screen does
+            print(f"  🎤 {clip['text']}")
+            return {"url": f"/voicepack/{clip['file']}", "text": clip["text"]}
         self.n_audio += 1
         name = f"live_{self.n_audio:03d}_{kind.replace(' ', '_')}"
         try:
@@ -1320,6 +1327,9 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return self._send(200, director.recap_html().encode())
             if u.path == "/qr.svg":
                 return self._send(200, qr_svg(guest_url() or ""), "image/svg+xml")
+            if u.path.startswith("/voicepack/"):
+                f = voicepack.PACK / Path(urllib.parse.unquote(u.path[11:])).name
+                return self._send(200, f.read_bytes(), "audio/mpeg") if f.suffix == ".mp3" and f.exists() else self._send(404)
             if u.path.startswith("/audio/"):
                 f = AUDIO_DIR / Path(urllib.parse.unquote(u.path[7:])).name
                 if f.exists():

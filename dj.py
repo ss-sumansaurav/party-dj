@@ -398,6 +398,7 @@ def main(argv=None) -> int:
     mode.add_argument("--test", action="store_true", help="dry run before the party")
     mode.add_argument("--songs", dest="songs_page", action="store_true", help="see, add or remove party songs")
     mode.add_argument("--live", action="store_true", help="same as no option: run the party")
+    mode.add_argument("--voice-pack", action="store_true", help="record the DJ's lines in a human voice (ElevenLabs)")
     args = p.parse_args(argv)
     if args.setup:
         return cmd_setup(args)
@@ -419,6 +420,10 @@ def main(argv=None) -> int:
     announcer.DJ_VOICE = cfg.dj_voice
     announcer.SAY_AS.update(cfg.name_pronunciations)
     announcer.HINDI_VOICE = cfg.hindi_voice
+    if args.voice_pack:
+        from partydj import voicepack
+
+        return voicepack.record(cfg)
     if args.check_config:
         return cmd_check_config(cfg)
     if args.check_auth:
