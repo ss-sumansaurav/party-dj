@@ -88,6 +88,15 @@ def _hosts(cfg) -> str:
     return f"{cfg.host_name} and {cfg.co_host_name}" if getattr(cfg, "co_host_name", "") else cfg.host_name
 
 
+def _first(name: str) -> str:
+    return (str(name).lower().split() or [""])[0]
+
+
+def _first_names(hosts: str) -> set[str]:
+    """'AMIT and APARNA' -> {'amit', 'aparna'}"""
+    return {_first(h) for h in str(hosts).lower().replace(" & ", " and ").split(" and ") if h.strip()}
+
+
 def lines_for(cfg) -> list[tuple[str, str]]:
     """(kind, words) for this party, names filled in."""
     hosts = _hosts(cfg)
@@ -108,8 +117,16 @@ class Pack:
         except (OSError, ValueError):
             data = {}
         self.clips: dict[str, list[dict]] = data.get("clips", {})
-        if cfg is not None and (getattr(cfg, "party_type", "") != "diwali" or " ".join(str(data.get("hosts", "")).lower().split()) != " ".join(_hosts(cfg).lower().split())):
-            self.clips = {}   # recorded for another party: its names would be wrong
+        self.hosts = str(data.get("hosts", ""))
+        self.why_not = ""
+        if cfg is not None and self.clips:
+            if getattr(cfg, "party_type", "") != "diwali":
+                self.why_not = "it was recorded for a Diwali party"
+            elif _first(cfg.host_name) not in _first_names(self.hosts):
+                # recorded for another party: its names would be wrong
+                self.why_not = f"it was recorded for {' and '.join(h.strip().title() for h in self.hosts.split(' and '))}'s party; this party's host is {cfg.host_name}"
+            if self.why_not:
+                self.clips = {}
         self.clips = {k: [c for c in v if (folder / c["file"]).exists()] for k, v in self.clips.items()}
         self.turn: dict[str, int] = {}
         self.rng = random.Random()

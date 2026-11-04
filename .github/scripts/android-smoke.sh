@@ -12,7 +12,7 @@ for i in $(seq 1 60); do
 done
 sleep 3
 adb exec-out screencap -p > setup.png || true
-curl -s -m 20 -X POST -d "kind=diwali&host=Amit&co_host=Aparna&city=Melbourne&date=$(date +%F)&start=19:00&hours=5&moment=21:00" \
+curl -s -m 20 -X POST -d "kind=diwali&host=Amit&co_host=Priya&city=Melbourne&date=$(date +%F)&start=19:00&hours=5&moment=21:00" \
   http://localhost:8765/setup | head -c 200
 ok=0
 for i in $(seq 1 120); do

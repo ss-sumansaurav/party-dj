@@ -215,6 +215,10 @@ class Director:
         self.pack = voicepack.Pack(cfg=cfg)  # the recorded human DJ voice, when there is one
         if self.pack:
             print("🎙 Using the recorded DJ voice (partydj/voice_pack).")
+            self.notice("🎙 Recorded DJ voice is on")
+        elif self.pack.why_not:
+            print(f"🎙 Not using the recorded DJ voice: {self.pack.why_not}.")
+            self.notice(f"🎙 Recorded DJ voice is off: {self.pack.why_not}")
         self.n_audio = 0
 
     # ---------- helpers ----------
