@@ -176,6 +176,10 @@ def _ask_key() -> str:
     print("Paste your ElevenLabs API key (from elevenlabs.io > your profile > API Keys).")
     print("Nothing shows while you paste: paste it ONCE, then press Return.")
     key = _clean(getpass.getpass("API key: "))
+    while key and not key.startswith("sk_"):
+        print("That isn't the secret key. It must start with sk_ (the shorter 'key ID' won't work).")
+        print("On elevenlabs.io > API Keys, press 'Create API key' and copy the sk_... value it shows once.")
+        key = _clean(getpass.getpass("API key: "))
     if key and input("Keep it on this Mac for next time? [y/N] ").strip().lower() == "y":
         _save(key)
         print("Saved in .env (it's never uploaded or shared).")
@@ -187,6 +191,10 @@ def _key() -> str:
 
     load_dotenv()
     key = _clean(os.environ.get("ELEVENLABS_API_KEY", ""))
+    if key and not key.startswith("sk_"):
+        print("The key saved on this Mac is a key ID, not the secret key, so I've removed it.")
+        _save(None)
+        key = ""
     return key or _ask_key()
 
 
