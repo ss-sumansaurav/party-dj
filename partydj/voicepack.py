@@ -108,7 +108,7 @@ class Pack:
         except (OSError, ValueError):
             data = {}
         self.clips: dict[str, list[dict]] = data.get("clips", {})
-        if cfg is not None and (getattr(cfg, "party_type", "") != "diwali" or data.get("hosts") != _hosts(cfg)):
+        if cfg is not None and (getattr(cfg, "party_type", "") != "diwali" or " ".join(str(data.get("hosts", "")).lower().split()) != " ".join(_hosts(cfg).lower().split())):
             self.clips = {}   # recorded for another party: its names would be wrong
         self.clips = {k: [c for c in v if (folder / c["file"]).exists()] for k, v in self.clips.items()}
         self.turn: dict[str, int] = {}

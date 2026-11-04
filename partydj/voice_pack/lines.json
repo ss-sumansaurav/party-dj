@@ -1,0 +1,202 @@
+{
+ "voice": "Charlie - Deep, Confident, Energetic",
+ "hosts": "AMIT and APARNA",
+ "clips": {
+  "opening": [
+   {
+    "file": "01_opening.mp3",
+    "text": "Happy Diwali, everybody! Welcome to AMIT and APARNA's Diwali party in Melbourne! I'm your DJ tonight, the diyas are lit, the vibe is set... so chalo, let's get this party started!"
+   }
+  ],
+  "Warm-up": [
+   {
+    "file": "02_warm-up.mp3",
+    "text": "Ohhh, this one's a classic! Sing along, everybody!"
+   },
+   {
+    "file": "03_warm-up.mp3",
+    "text": "Diyas glowing, food is ready, and the music is ON! Let's go!"
+   },
+   {
+    "file": "04_warm-up.mp3",
+    "text": "Old is gold, my friends! Volume up!"
+   }
+  ],
+  "Build": [
+   {
+    "file": "05_build.mp3",
+    "text": "Arre wah! I see some moves already! Keep it going!"
+   },
+   {
+    "file": "06_build.mp3",
+    "text": "AMIT, get everyone on the floor! Come on, come on!"
+   },
+   {
+    "file": "07_build.mp3",
+    "text": "The energy is building, and I LOVE it!"
+   },
+   {
+    "file": "08_build.mp3",
+    "text": "Full josh now, everybody! Let's gooo!"
+   }
+  ],
+  "Peak": [
+   {
+    "file": "09_peak.mp3",
+    "text": "Okay, THIS is the moment! Haath upar, hands all the way up!"
+   },
+   {
+    "file": "10_peak.mp3",
+    "text": "Turn it up, louder! This one is a total banger!"
+   },
+   {
+    "file": "11_peak.mp3",
+    "text": "Brighter than the fireworks outside! Everybody, jump!"
+   },
+   {
+    "file": "12_peak.mp3",
+    "text": "Dhol is coming in, you know what time it is! Balle balle!"
+   }
+  ],
+  "Peak 2": [
+   {
+    "file": "13_peak_2.mp3",
+    "text": "Thought we were done? No way! The night is still young!"
+   },
+   {
+    "file": "14_peak_2.mp3",
+    "text": "This Diwali party is next level! Don't stop now!"
+   },
+   {
+    "file": "15_peak_2.mp3",
+    "text": "Let me hear you, Melbourne! Make some noise!"
+   },
+   {
+    "file": "16_peak_2.mp3",
+    "text": "Ekdum full power! Here we go again!"
+   }
+  ],
+  "Wind-down": [
+   {
+    "file": "17_wind-down.mp3",
+    "text": "Alright, let's slow it down a little... grab someone special."
+   },
+   {
+    "file": "18_wind-down.mp3",
+    "text": "Take a breather, and sing along with me."
+   }
+  ],
+  "vibe_up": [
+   {
+    "file": "19_vibe_up.mp3",
+    "text": "Arre, why so quiet? It's Diwali! I need more energy!"
+   },
+   {
+    "file": "20_vibe_up.mp3",
+    "text": "Come on, I know you've got more than that! Let's turn it up!"
+   }
+  ],
+  "request": [
+   {
+    "file": "21_request.mp3",
+    "text": "We have a request, and what a choice! Let's go!"
+   },
+   {
+    "file": "22_request.mp3",
+    "text": "Somebody has great taste! Coming right up!"
+   }
+  ],
+  "guest_request": [
+   {
+    "file": "23_guest_request.mp3",
+    "text": "Request from the crowd! Great choice, this one's for you!"
+   },
+   {
+    "file": "24_guest_request.mp3",
+    "text": "You asked for it, you got it! Let's go!"
+   }
+  ],
+  "dedication": [
+   {
+    "file": "25_dedication.mp3",
+    "text": "A special dedication, with lots of love! This one's for you!"
+   }
+  ],
+  "dance_floor": [
+   {
+    "file": "26_dance_floor.mp3",
+    "text": "I see too many people sitting down! Chalo, everybody on the dance floor!"
+   },
+   {
+    "file": "27_dance_floor.mp3",
+    "text": "The dance floor is looking lonely! Grab a friend and come on up!"
+   }
+  ],
+  "karaoke": [
+   {
+    "file": "28_karaoke.mp3",
+    "text": "Karaoke time! The words are on the screen, so sing it LOUD!"
+   },
+   {
+    "file": "29_karaoke.mp3",
+    "text": "Tonight, YOU are the singer! Everybody, sing along!"
+   }
+  ],
+  "sing_along": [
+   {
+    "file": "30_sing_along.mp3",
+    "text": "This one is yours! Everybody sing!"
+   },
+   {
+    "file": "31_sing_along.mp3",
+    "text": "I can't hear you! Sing it with me!"
+   }
+  ],
+  "hype": [
+   {
+    "file": "32_hype.mp3",
+    "text": "Make some noise for AMIT and APARNA! Louder! Let me hear you!"
+   },
+   {
+    "file": "33_hype.mp3",
+    "text": "Everybody, haath upar! Happy Diwali, what a party!"
+   }
+  ],
+  "cake_10": [
+   {
+    "file": "34_cake_10.mp3",
+    "text": "Ten minutes to our Diwali moment! Find your family and friends, and get ready!"
+   }
+  ],
+  "cake_5": [
+   {
+    "file": "35_cake_5.mp3",
+    "text": "Just five minutes to go! Everybody gather round, our Diwali moment is almost here!"
+   }
+  ],
+  "birthday_intro": [
+   {
+    "file": "36_birthday_intro.mp3",
+    "text": "Can I have everyone's attention, please? Gather round, diyas ready... it's our Diwali moment with AMIT and APARNA!"
+   }
+  ],
+  "cake": [
+   {
+    "file": "37_cake.mp3",
+    "text": "Three... two... one... HAPPY DIWALI, everybody! Shubh Deepavali!"
+   }
+  ],
+  "shoutout": [
+   {
+    "file": "38_shoutout.mp3",
+    "text": "Happy Diwali, Melbourne! A big, big thank you to AMIT and APARNA for bringing everyone together tonight!"
+   }
+  ],
+  "closing": [
+   {
+    "file": "39_closing.mp3",
+    "text": "You were all amazing tonight! Happy Diwali once again. AMIT and APARNA, thank you for this lovely party. Good night, everybody!"
+   }
+  ]
+ }
+}
