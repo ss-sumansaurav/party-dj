@@ -135,22 +135,41 @@ def _call(path: str, key: str, body: dict | None = None) -> bytes:
         return r.read()
 
 
+def _clean(key: str) -> str:
+    """Nothing shows while you paste, so people paste twice or three times: keep one copy."""
+    key = "".join(key.split())
+    for n in range(2, 5):
+        if len(key) % n == 0 and key == key[: len(key) // n] * n:
+            return key[: len(key) // n]
+    return key
+
+
+def _save(key: str | None):
+    """Put the key in .env (or take it out when key is None)."""
+    env = Path(".env")
+    lines = [l for l in (env.read_text().splitlines() if env.exists() else [])
+             if not l.startswith("ELEVENLABS_API_KEY=")]
+    if key:
+        lines.append(f"ELEVENLABS_API_KEY={key}")
+    env.write_text("\n".join(lines) + ("\n" if lines else ""))
+
+
+def _ask_key() -> str:
+    print("Paste your ElevenLabs API key (from elevenlabs.io > your profile > API Keys).")
+    print("Nothing shows while you paste: paste it ONCE, then press Return.")
+    key = _clean(getpass.getpass("API key: "))
+    if key and input("Keep it on this Mac for next time? [y/N] ").strip().lower() == "y":
+        _save(key)
+        print("Saved in .env (it's never uploaded or shared).")
+    return key
+
+
 def _key() -> str:
     from dotenv import load_dotenv
 
     load_dotenv()
-    key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
-    if key:
-        return key
-    print("Paste your ElevenLabs API key (from elevenlabs.io > your profile > API Keys).")
-    print("It won't show as you paste. Press Return when done.")
-    key = getpass.getpass("API key: ").strip()
-    if key and input("Keep it in the .env file on this Mac for next time? [y/N] ").strip().lower() == "y":
-        env = Path(".env")
-        old = env.read_text() if env.exists() else ""
-        env.write_text(old + ("" if old.endswith("\n") or not old else "\n") + f"ELEVENLABS_API_KEY={key}\n")
-        print("Saved in .env (it's never uploaded or shared).")
-    return key
+    key = _clean(os.environ.get("ELEVENLABS_API_KEY", ""))
+    return key or _ask_key()
 
 
 def _choose_voice(key: str) -> tuple[str, str]:
@@ -192,11 +211,21 @@ def record(cfg) -> int:
             return 1
     except urllib.error.HTTPError:
         print(f"These {len(lines)} lines use about {chars:,} characters (the free tier gives 10,000 a month).")
-    try:
-        voice_id, name = _choose_voice(key)
-    except urllib.error.HTTPError as e:
-        print(f"ElevenLabs said no ({e.code}). Check the API key, then run this again.")
-        return 1
+    for attempt in (1, 2):
+        try:
+            voice_id, name = _choose_voice(key)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and attempt == 1:
+                print("\nElevenLabs didn't accept that key. Usually it was pasted twice, or the key's")
+                print("permissions are switched off. Let's try once more.")
+                _save(None)
+                key = _ask_key()
+                if key:
+                    continue
+            print(f"ElevenLabs said no ({e.code}). On elevenlabs.io, open API Keys, make a new key with")
+            print("'Text to Speech' and 'Voices' allowed (or no restrictions), then run this again.")
+            return 1
     tmp = PACK.with_name("voice_pack_new")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir()
