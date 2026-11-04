@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yaml
 
-from . import resolver
+from . import remote, resolver
 from .songs import MIN_ENERGY, Song, _song, norm, title_looks_explicit
 
 LANGS = {"hi": "Hindi", "pa": "Punjabi", "en": "English"}
@@ -326,6 +326,8 @@ def serve_alone(book: Songbook, port: int) -> str:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, code, body=b"", kind="text/html; charset=utf-8"):
+            if kind.startswith("text/html"):
+                body = remote.add(body)   # TV remote: arrow keys move between buttons
             self.send_response(code)
             self.send_header("Content-Type", kind)
             self.send_header("Cache-Control", "no-store")

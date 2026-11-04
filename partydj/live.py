@@ -21,7 +21,7 @@ import urllib.parse
 import webbrowser
 from pathlib import Path
 
-from . import announcer, cuts, event, fx, theme, voicepack
+from . import announcer, cuts, event, fx, remote, theme, voicepack
 from .config import load_config
 from .planner import PHASE_RULES, Slot
 from .songbook import Songbook
@@ -1280,6 +1280,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _send(self, code, body=b"", kind="text/html; charset=utf-8"):
+            if kind.startswith("text/html"):
+                body = remote.add(body)   # TV remote: arrow keys move between buttons
             self.send_response(code)
             self.send_header("Content-Type", kind)
             self.send_header("Cache-Control", "no-store")
@@ -1880,6 +1882,7 @@ setTheme((()=>{ try { return localStorage.getItem('dj-theme') || 'dark'; } catch
 async function startParty(){
   if(!$('start')) return;
   await post('/start'); $('start').remove(); $('ui').hidden=false; next(false);
+  if(document.documentElement.classList.contains('dpad') || window.__tv) $('skip').focus();   // TV remote: land on the big buttons
 }
 $('start').onclick = ()=>{
   if(!playersReady()){   // start by itself as soon as the player is ready
@@ -1995,9 +1998,13 @@ document.querySelectorAll('.lang').forEach(b => b.onclick = async ()=>{
     load(); } catch(e){ $('down').style.display='block'; } });
 // Big screen and recap open over the DJ page, so the music keeps going and ✕ comes back.
 // On a computer the big screen can still go in its own window, for a TV or a second screen.
-function openBox(url){ $('songsframe').src = url; $('songsbox').style.display = 'flex'; }
+function openBox(url){ const f = $('songsframe'); boxFrom = document.activeElement;
+  f.onload = () => { try { f.contentWindow.__tv = window.__tv || matchMedia('(any-pointer: none)').matches; f.contentWindow.focus(); } catch(e){} };
+  f.src = url; $('songsbox').style.display = 'flex'; }
+let boxFrom = null;
 window.closeBox = () => { if($('songsbox').style.display !== 'flex') return false;
-  $('songsbox').style.display='none'; $('songsframe').src='about:blank'; load(); return true; };
+  $('songsbox').style.display='none'; $('songsframe').src='about:blank'; load();
+  const back = boxFrom; window.focus(); setTimeout(()=>{ if(back && back.focus) back.focus(); }, 50); return true; };
 window.djBack = () => window.closeBox();   // the phone's back button
 $('tvbtn').onclick = () => (window.AndroidSpeech || matchMedia('(pointer:coarse)').matches) ? openBox('/tv') : window.open('/tv','dj-tv');
 $('recapbtn').onclick = () => openBox('/recap');

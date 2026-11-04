@@ -69,6 +69,35 @@ jobs:
             screen.png
             setup.png
 
+  # The same app on an Android TV emulator, driven only with the remote's keys.
+  tv-test:
+    needs: apk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: party-dj-apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86
+          target: android-tv
+          script: bash .github/scripts/android-tv-smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tv-screens
+          path: |
+            tv-setup.png
+            tv-dj.png
+            tv-remote.png
+
   voice-check:
     # The container that writes this code can't reach the voice service, so check here that the
     # DJ's voices (English and Hindi) really produce speech.

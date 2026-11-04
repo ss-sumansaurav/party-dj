@@ -3,7 +3,9 @@ package com.party.dj
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.UiModeManager
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
@@ -27,7 +29,7 @@ import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
 
 /**
- * The phone app: runs the same Python party DJ as the Mac inside the app, then shows the
+ * The phone and TV app: runs the same Python party DJ as the Mac inside the app, then shows the
  * DJ page full screen. The screen stays on so the music never stops mid-party.
  */
 class MainActivity : Activity() {
@@ -91,7 +93,14 @@ class MainActivity : Activity() {
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
         }
-        view.webViewClient = WebViewClient()
+        view.webViewClient = object : WebViewClient() {
+            // On a TV, tell the page so it puts the main button in focus for the remote.
+            override fun onPageFinished(v: WebView, url: String) {
+                if (isTv()) v.evaluateJavascript("window.__tv=1; window.dispatchEvent(new Event('focus'))", null)
+            }
+        }
+        view.isFocusable = true
+        view.isFocusableInTouchMode = true
         view.webChromeClient = object : WebChromeClient() {
             // The crowd camera on the DJ page (it only works out a movement number).
             override fun onPermissionRequest(request: PermissionRequest) {
@@ -103,6 +112,7 @@ class MainActivity : Activity() {
         view.loadUrl(url)
         web = view
         setContentView(view)
+        view.requestFocus()
     }
 
     /** The 🎙 Speak button: the phone's own speech recogniser, since web views don't have one. */
@@ -134,6 +144,10 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    private fun isTv(): Boolean =
+        (getSystemService(UI_MODE_SERVICE) as UiModeManager).currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+            packageManager.hasSystemFeature("android.software.leanback")
 
     private fun reply(text: String?) {
         val arg = if (text == null) "null" else JSONObject.quote(text)

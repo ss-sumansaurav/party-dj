@@ -113,6 +113,9 @@ def _ask_party() -> str:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def _page(self, body: bytes):
+            from . import remote
+
+            body = remote.add(body)   # TV remote: arrow keys move between the boxes and buttons
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
