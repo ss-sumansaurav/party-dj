@@ -12,8 +12,8 @@ android {
         applicationId = "com.party.dj"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.5.1"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

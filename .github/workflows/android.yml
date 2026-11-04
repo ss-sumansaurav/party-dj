@@ -28,6 +28,10 @@ jobs:
           mkdir -p android/app/src/main/python
           cp -r partydj android/app/src/main/python/
           cp config.yaml songs.yaml android/app/src/main/python/partydj/
+      - name: Look up the songs on YouTube Music now, so the app doesn't on first launch
+        run: |
+          pip install -r requirements.txt
+          python .github/scripts/resolve_songs.py android/app/src/main/python/partydj/tracks.json
       - name: Build the APK
         run: gradle -p android assembleDebug --stacktrace
       - name: Name the APK

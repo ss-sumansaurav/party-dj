@@ -156,6 +156,24 @@ def _ask_party() -> str:
     return str(saved)
 
 
+def _seed_tracks():
+    """Add the app's bundled song look-ups to the phone's own cache (the phone's own entries win)."""
+    import json
+
+    from . import resolver
+
+    try:
+        bundled = json.loads((HERE / "tracks.json").read_text())
+    except (OSError, ValueError):
+        return
+    try:
+        mine = json.loads(resolver.CACHE.read_text()) if resolver.CACHE.exists() else {}
+    except ValueError:
+        mine = {}
+    resolver.CACHE.parent.mkdir(exist_ok=True)
+    resolver.CACHE.write_text(json.dumps({**bundled, **mine}, indent=1))
+
+
 def _start(files_dir: str):
     os.chdir(files_dir)
     # config.yaml comes with the app; songs.yaml is copied once so songs-page edits are kept.
@@ -202,6 +220,7 @@ def _start(files_dir: str):
     def progress(msg):  # msg is like "  looked up 40/138"
         _say("Finding songs on YouTube Music… " + msg.split()[-1].replace("/", " of "))
 
+    _seed_tracks()  # songs looked up when the app was built: no need to search for them again
     resolver.resolve_all(yt, pool + [birthday] + ([birthday.before] if birthday.before else []), progress=progress)
     found = [s for s in pool if s.video_id]
     plan = planner.build_plan(found, birthday, cfg)

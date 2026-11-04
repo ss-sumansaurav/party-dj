@@ -1327,6 +1327,9 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return self._send(200, director.recap_html().encode())
             if u.path == "/qr.svg":
                 return self._send(200, qr_svg(guest_url() or ""), "image/svg+xml")
+            if u.path == "/clientlog":   # what the DJ page reports about loading the YouTube player
+                print("  page:", (urllib.parse.parse_qs(u.query).get("m") or [""])[0][:200], flush=True)
+                return self._send(204)
             if u.path.startswith("/voicepack/"):
                 f = voicepack.PACK / Path(urllib.parse.unquote(u.path[11:])).name
                 return self._send(200, f.read_bytes(), "audio/mpeg") if f.suffix == ".mp3" and f.exists() else self._send(404)
@@ -1649,10 +1652,37 @@ async function talk(list, p){
   for(const a of list){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url); }
   $('voice').textContent=''; if(p) ramp(p, DUCK, 100, 1.5);
 }
-function onYouTubeIframeAPIReady(){
-  for(const i of [0,1]) P[i] = new YT.Player('p'+i,{height:'180',width:'320',playerVars:{origin:location.origin,playsinline:1,controls:0,disablekb:1},
+function plog(m){ try{ fetch('/clientlog?m='+encodeURIComponent(m)); }catch(e){} }
+let wantStart = false, ytTries = 0, okP = [false, false];
+function playersReady(){ return okP[0] && okP[1]; }
+function loadYT(){   // (re)load YouTube's player script; a slow or dropped connection can lose it
+  ytTries++; const s = document.createElement('script');
+  s.src = 'https://www.youtube.com/iframe_api?t='+Date.now(); s.onerror = ()=>plog('player script failed to load (try '+ytTries+')');
+  document.head.appendChild(s);
+}
+function makePlayers(){
+  for(const i of [0,1]) if(!okP[i]){
+    try{ if(P[i] && P[i].destroy) P[i].destroy(); }catch(e){}
+    const old = document.getElementById('p'+i); if(old && old.tagName === 'IFRAME'){ const d=document.createElement('div'); d.id='p'+i; old.replaceWith(d); }
+    makePlayer(i);
+  }
+}
+function playerReadyNow(){
+  ready = okP.filter(Boolean).length;
+  if(playersReady()){ plog('players ready'); if(wantStart){ wantStart = false; startParty(); } }
+}
+// Keep trying until both players are up: reload the script, then rebuild the players.
+setInterval(()=>{
+  if(playersReady()) return;
+  if(typeof YT === 'undefined' || !YT.Player){ if(ytTries < 20) loadYT(); }
+  else makePlayers();
+  if(wantStart) $('start').textContent = '⏳ Connecting to YouTube… (check the internet)';
+}, 15000);
+function onYouTubeIframeAPIReady(){ plog('player script loaded'); makePlayers(); }
+function makePlayer(i){
+  P[i] = new YT.Player('p'+i,{height:'180',width:'320',playerVars:{origin:location.origin,playsinline:1,controls:0,disablekb:1},
     events:{onReady:()=>{ const raw = P[i].setVolume.bind(P[i]);   // every level is scaled by the music volume
-              P[i].setVolume = v => { P[i]._v = v; raw(Math.round(v*SOUND.music/100)); }; ready++; }, onError:()=>{ if(i===active && cur) skipBroken(); },
+              P[i].setVolume = v => { P[i]._v = v; raw(Math.round(v*SOUND.music/100)); }; okP[i] = true; playerReadyNow(); }, onError:()=>{ if(i===active && cur) skipBroken(); },
             onStateChange:e=>{ if(i===active && e.data===YT.PlayerState.ENDED && !busy) next(false); }}});
 }
 async function fetchNext(err){ fetching=true; try{ upcoming = await post('/next'+(err?'?v=error':'')); } finally { fetching=false; } }
@@ -1840,9 +1870,15 @@ function setTheme(t){ document.body.className = t === 'dark' ? '' : t;
   try { localStorage.setItem('dj-theme', t); } catch(e){} }
 document.querySelectorAll('#themes button').forEach(b => b.onclick = () => setTheme(b.dataset.t));
 setTheme((()=>{ try { return localStorage.getItem('dj-theme') || 'dark'; } catch(e){ return 'dark'; } })());
-$('start').onclick = async ()=>{
-  if(ready<2){ toast('Loading the player, one moment…'); return; }
+async function startParty(){
+  if(!$('start')) return;
   await post('/start'); $('start').remove(); $('ui').hidden=false; next(false);
+}
+$('start').onclick = ()=>{
+  if(!playersReady()){   // start by itself as soon as the player is ready
+    wantStart = true; $('start').textContent = '⏳ Loading the player… it starts by itself';
+    toast('Loading the YouTube player. The party starts by itself in a moment.'); plog('start tapped before the player was ready'); return; }
+  startParty();
 };
 document.querySelectorAll('.mode[data-m]').forEach(b=>b.onclick=()=>post('/mode?v='+b.dataset.m).then(()=>{toast('Vibe: '+b.textContent.trim()); load();}).catch(()=>$('down').style.display='block'));
 window.score = n => post('/score?v='+n).then(()=>{toast('Vibe '+n+' saved ✓'); load();});

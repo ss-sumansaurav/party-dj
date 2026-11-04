@@ -12,7 +12,7 @@ for i in $(seq 1 60); do
 done
 sleep 3
 adb exec-out screencap -p > setup.png || true
-curl -s -m 20 -X POST -d "kind=diwali&host=Amit&co_host=Priya&city=Melbourne&date=$(date +%F)&start=19:00&hours=5&moment=21:00" \
+curl -s -m 20 -X POST -d "kind=diwali&host=Amit&co_host=Aparna&city=Melbourne&date=$(date +%F)&start=19:00&hours=5&moment=21:00" \
   http://localhost:8765/setup | head -c 200
 ok=0
 for i in $(seq 1 120); do
@@ -20,6 +20,14 @@ for i in $(seq 1 120); do
   if adb logcat -d | grep -q "FATAL EXCEPTION"; then break; fi
   sleep 5
 done
+# The page's YouTube players must come up, or START can't begin the party.
+players=0
+for i in $(seq 1 24); do
+  if adb logcat -d -s python.stdout:I | grep -q "page: players ready"; then players=1; break; fi
+  sleep 5
+done
+voice=0
+adb logcat -d -s python.stdout:I | grep -q "Using the recorded DJ voice" && voice=1
 adb forward tcp:8765 tcp:8765
 state=$(curl -s -m 10 http://localhost:8765/state || true)
 songs=$(curl -s -m 10 http://localhost:8765/api/songs | head -c 200 || true)
@@ -29,5 +37,5 @@ sleep 8
 adb exec-out screencap -p > screen.png || true
 log=$( { adb logcat -d -s python.stdout python.stderr AndroidRuntime:E chromium:I | tail -80; } | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
 echo "::notice title=App log::${log}"
-echo "::notice title=Page checks::state=${state}%0Asongs=${songs}%0Astart=${started}%0Anext=${next}"
-[ "$ok" = 1 ] && [ -n "$state" ] && echo "$next" | grep -q '"vid"'
+echo "::notice title=Page checks::players=${players} voice=${voice}%0Astate=${state}%0Asongs=${songs}%0Astart=${started}%0Anext=${next}"
+[ "$ok" = 1 ] && [ "$players" = 1 ] && [ "$voice" = 1 ] && [ -n "$state" ] && echo "$next" | grep -q '"vid"'
