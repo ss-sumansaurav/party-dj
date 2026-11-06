@@ -35,6 +35,41 @@ def ask(question: str) -> bool:
         return False
 
 
+def choose_party() -> str | None:
+    """No party file given: ask which party (each set up with --setup), or set up a new one.
+    Returns the file, or None to set up a new party."""
+    from partydj import event
+
+    files = sorted(Path(".").glob("party-*.yaml"), key=lambda f: f.stat().st_mtime, reverse=True)
+    if Path("config.yaml").exists():
+        files.append(Path("config.yaml"))
+    parties = []
+    for f in files:
+        try:
+            cfg = load_config(f)
+        except (ConfigError, OSError):
+            continue
+        parties.append((str(f), f"{event.title(cfg)}, {cfg.party_date}"))
+    if not parties:
+        return None
+    print("Which party?")
+    for i, (f, name) in enumerate(parties, 1):
+        print(f"  {i}. {name}   ({f})")
+    print(f"  {len(parties) + 1}. Set up a new party")
+    while True:
+        try:
+            got = input(f"Type 1 to {len(parties) + 1} and press Return [1]: ").strip() or "1"
+        except EOFError:
+            got = "1"
+        if got.isdigit() and 1 <= int(got) <= len(parties) + 1:
+            break
+    if int(got) == len(parties) + 1:
+        return None
+    f = parties[int(got) - 1][0]
+    print(f"\nNext time you can skip this question with:  python3 dj.py --config {f}\n")
+    return f
+
+
 def cmd_check_config(cfg) -> int:
     from partydj import event
 
@@ -413,7 +448,7 @@ def cmd_setup(args) -> int:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="AI DJ for a home party: a birthday or Diwali")
-    p.add_argument("--config", default="config.yaml")
+    p.add_argument("--config", default=None, help="the party's file; left out, it asks which party")
     p.add_argument("--songs-file", dest="songs", default="songs.yaml")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--setup", action="store_true", help="set up a new party: birthday or Diwali")
@@ -429,6 +464,10 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     if args.setup:
         return cmd_setup(args)
+    if args.config is None:
+        args.config = choose_party()
+        if args.config is None:
+            return cmd_setup(args)
 
     try:
         cfg = load_config(args.config)
