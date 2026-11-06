@@ -289,10 +289,10 @@ def sign_in_if_needed(allow_skip: bool = False):
         print("requests, everything), like the phone app. The only thing missing is the private")
         print("YouTube Music playlist of the night's songs.")
         try:
-            pick = input("Type S and press Return to play without signing in, or just press Return to sign in: ")
+            pick = input("Press Return to play WITHOUT signing in, or type Y and press Return to sign in: ")
         except EOFError:
-            pick = "s"
-        if pick.strip().lower().startswith("s"):
+            pick = ""
+        if pick.strip().lower() not in ("y", "yes"):
             return SKIP
     print("1. In Chrome, open music.youtube.com (signed in).")
     print("2. Press Option-Command-I, click the Network tab, then click Home on the page.")
@@ -316,8 +316,8 @@ def cmd_party(cfg, args) -> int:
     print(f"Hosts: {event.hosts(cfg)}" + (f"  ·  {cfg.city}" if cfg.city else "") + "\n")
     signed = SKIP if args.no_sign_in else sign_in_if_needed(allow_skip=True)
     if not signed:
-        print("Sign-in didn't work. Run it again and type S to play without signing in.")
-        return 1
+        print("Sign-in didn't work, so the DJ plays without signing in (no playlist is saved).")
+        signed = SKIP
     if signed == SKIP:
         from ytmusicapi import YTMusic
 

@@ -309,7 +309,7 @@ by the computer voice.
 ## Play without signing in
 
 Signing in to YouTube Music is only needed to save the night's songs as a private playlist.
-To skip it, type **S** when the DJ asks you to sign in, or start with:
+To skip it, just press Return when the DJ asks you to sign in, or start with:
 
 ```
 python3 dj.py --config <your party file> --no-sign-in
