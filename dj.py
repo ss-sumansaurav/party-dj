@@ -4,6 +4,7 @@
   python dj.py --setup          set up a new party (birthday or Diwali), its hosts and its YouTube account
   python dj.py --check-config   validate config.yaml and show the party timeline
   python dj.py --sign-in        save YouTube Music sign-in from headers on the clipboard
+  python dj.py --no-sign-in     play without a YouTube account (no playlist is saved)
   python dj.py --check-auth     confirm YouTube Music sign-in works
   python dj.py --test           dry run before the party
   python dj.py --songs          see, add or remove the party's songs
@@ -227,8 +228,12 @@ def cmd_test(cfg, args) -> int:
     return 0
 
 
-def sign_in_if_needed() -> bool:
-    """Make sure YouTube Music sign-in works, walking the host through it if not."""
+SKIP = "skip"   # play without a YouTube account: everything works except saving the private playlist
+
+
+def sign_in_if_needed(allow_skip: bool = False):
+    """Make sure YouTube Music sign-in works, walking the host through it if not.
+    Returns True when signed in, False when it failed, or SKIP when the host chose to go without."""
     from partydj.ytm import AuthError, check_auth
 
     from partydj import ytm
@@ -244,6 +249,16 @@ def sign_in_if_needed() -> bool:
     from partydj import ytm
     if ytm.PARTY_AUTH_FILE:
         print("   This party uses its own YouTube account. In Chrome, sign in with THAT account first.")
+    if allow_skip:
+        print("\nYou can also play WITHOUT signing in. The DJ works exactly the same (songs, voice,")
+        print("requests, everything), like the phone app. The only thing missing is the private")
+        print("YouTube Music playlist of the night's songs.")
+        try:
+            pick = input("Type S and press Return to play without signing in, or just press Return to sign in: ")
+        except EOFError:
+            pick = "s"
+        if pick.strip().lower().startswith("s"):
+            return SKIP
     print("1. In Chrome, open music.youtube.com (signed in).")
     print("2. Press Option-Command-I, click the Network tab, then click Home on the page.")
     print("3. Type browse in the filter box, right-click the first 'browse' row, Copy > Copy as cURL.")
@@ -264,13 +279,23 @@ def cmd_party(cfg, args) -> int:
 
     print(f"=== {event.title(cfg)} DJ ===")
     print(f"Hosts: {event.hosts(cfg)}" + (f"  ·  {cfg.city}" if cfg.city else "") + "\n")
-    if not sign_in_if_needed():
-        print("Sign-in didn't work. Run python dj.py again to retry.")
+    signed = SKIP if args.no_sign_in else sign_in_if_needed(allow_skip=True)
+    if not signed:
+        print("Sign-in didn't work. Run it again and type S to play without signing in.")
         return 1
-    yt = client()
+    if signed == SKIP:
+        from ytmusicapi import YTMusic
+
+        print("Playing without a YouTube account (no playlist will be saved).")
+        yt = YTMusic()   # finding songs works signed out
+    else:
+        yt = client()
     plan, cue_list, missing = build_set(cfg, yt, args.songs)
-    existing = find_existing(yt, cfg.playlist_title)
-    link = url(existing) if existing and playlist_matches(yt, existing, plan) else save_playlist(yt, cfg, plan)
+    if signed == SKIP:
+        link = None
+    else:
+        existing = find_existing(yt, cfg.playlist_title)
+        link = url(existing) if existing and playlist_matches(yt, existing, plan) else save_playlist(yt, cfg, plan)
     OUT_RUNSHEET.write_text(runsheet.to_markdown(plan, cue_list, cfg, link), encoding="utf-8")
     if missing:
         print(f"{len(missing)} songs weren't found on YouTube Music and are left out.")
@@ -398,6 +423,8 @@ def main(argv=None) -> int:
     mode.add_argument("--test", action="store_true", help="dry run before the party")
     mode.add_argument("--songs", dest="songs_page", action="store_true", help="see, add or remove party songs")
     mode.add_argument("--live", action="store_true", help="same as no option: run the party")
+    p.add_argument("--no-sign-in", action="store_true",
+                   help="play without a YouTube account (everything works; no playlist is saved)")
     mode.add_argument("--voice-pack", action="store_true", help="record the DJ's lines in a human voice (ElevenLabs)")
     args = p.parse_args(argv)
     if args.setup:

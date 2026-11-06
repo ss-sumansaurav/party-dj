@@ -305,3 +305,14 @@ with ElevenLabs (free tier is enough; it asks for your `sk_…` API key and neve
 name no one, so the recording works for any Diwali party. Lines already recorded in the same voice are
 kept, so a re-run only records new or changed lines. Song names, requesters and wishes are still read
 by the computer voice.
+
+## Play without signing in
+
+Signing in to YouTube Music is only needed to save the night's songs as a private playlist.
+To skip it, type **S** when the DJ asks you to sign in, or start with:
+
+```
+python3 dj.py --config <your party file> --no-sign-in
+```
+
+Everything else (finding and playing songs, the DJ voice, requests, the big screen) works the same.
