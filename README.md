@@ -155,18 +155,6 @@ party songs** link that opens the same list in a new tab, so the music keeps pla
 it also shows what's playing, what's next and what's already played. An added song joins the
 next part of the night that suits its energy, and a removed song won't play.
 
-## Mac app: no Terminal needed
-
-Double-click **Party DJ** (the app with the record-and-headphones icon in this folder; drag it to the Dock to keep it handy).
-
-1. Pick tonight's party from the list and press **Start the party**.
-2. The DJ page opens in the browser. Press the big START button there.
-3. A small Party DJ window stays up all night. **Open the DJ page** brings the page back; **Stop the party** ends the night and offers the party recap.
-
-The app plays without signing in to YouTube Music (everything works; only the private playlist isn't saved), keeps the Mac awake while the music plays, and, if the DJ stopped in the last 30 minutes, carries on where it left off. The first time on a new Mac it sets itself up, which needs the internet and a minute or two.
-
-If the Mac says the app "can't be opened" (it came from the internet, in a ZIP): open System Settings > Privacy & Security, scroll down and press **Open Anyway** next to Party DJ. You only do this once.
-
 ## Party night: one command
 
 Connect the Mac to the speaker, then in Terminal:
