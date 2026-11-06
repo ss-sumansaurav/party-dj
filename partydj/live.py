@@ -47,6 +47,7 @@ WISH_MAX = 140                 # characters in a guest's birthday wish
 WISHES_PER_PHONE = 5
 SLOW_MAX = 3   # Suman: songs with 3 stars or fewer only play when the Slow songs button is on
 DJ_SET_FILE = Path(__file__).parent / "dj_set.yaml"
+DJ_SET_SECONDS = 15 * 60   # Suman: a DJ set button plays 15 minutes unless Play full song is pressed
 
 
 def video_id(link: str) -> str | None:
@@ -559,9 +560,9 @@ class Director:
                 if hook and hook[0] > 8:
                     start = int(hook[0] - 4)
             play, fade = cuts.best_play(song.full_length, start, lines, lo, hi, self.cfg.crossfade_seconds)
-            if reason == "djset":   # the DJ set buttons: the whole song, from the very start
-                start, fade = 0, self.cfg.crossfade_seconds
-                play = song.seconds or 3600   # the page moves on when the song ends
+            if reason == "djset":   # a DJ set button: from the very start, 15 minutes (or all of it
+                start, fade = 0, self.cfg.crossfade_seconds   # with Play full song)
+                play = min(song.seconds, DJ_SET_SECONDS) if song.seconds else DJ_SET_SECONDS
             if reason == "birthday" and song is self.happy_birthday():
                 start, fade = 0, self.cfg.crossfade_seconds
                 play = min(song.full_length, self.cfg.happy_birthday_play_seconds)
@@ -1156,7 +1157,7 @@ class Director:
             self.played.discard(song.key)
             self.inserts = [(s, w) for s, w in self.inserts if w != "djset"]
             self.inserts.insert(0, (song, "djset"))
-        self.notice(f"🎧 DJ set {n}: '{song.title}' is playing now, the whole song.")
+        self.notice(f"🎧 DJ set {n}: '{song.title}' is playing now (15 minutes).")
         return f"🎧 DJ set {n}: {song.title}"
 
     def karaoke_now(self) -> str:
@@ -1595,12 +1596,19 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  .big small{display:block;font-size:13px;font-weight:500;opacity:.85}
  #main .row{flex-wrap:nowrap} @media (max-width:520px){.big{font-size:18px;padding:18px 8px;min-width:0}}
  #stop{background:#b71c1c} #fullbtn{background:#1565c0} #skip{background:#455a64}
+ .sec{text-align:left;font-weight:700;font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);margin:16px 0 8px}
+ .sec:first-child{margin-top:0} .sec small{text-transform:none;letter-spacing:0;font-weight:500;margin-left:6px}
+ .wide{flex:1;min-width:150px;font-size:18px;padding:14px 12px}
+ .pick{flex:1;min-width:150px;font-size:18px !important;padding:14px 12px;border-radius:14px}
+ .row.small .act{font-size:14px;padding:8px 12px;background:#3a2f2f}
+ .djs{width:72px;height:72px;font-size:30px;font-weight:800;border-radius:16px}
+ #main{margin-top:14px}
  #firebtn{background:linear-gradient(90deg,#ff6f00,#e53935,#d81b60);font-size:24px} #firebtn.on{box-shadow:0 0 0 3px #fff,0 0 24px #ff6f00}
  .lang{font-size:18px;padding:14px 20px;border-radius:14px;border:2px solid #555;background:transparent;color:var(--txt);cursor:pointer;min-width:96px}
  .lang.on{background:#2e7d32;border-color:#fff;color:#fff}
  #rate{margin-top:8px;display:flex;gap:4px;justify-content:center;align-items:center;flex-wrap:wrap}
  #rate .rl{color:var(--dim);margin-right:4px} #rate button[data-s]{font-size:30px;background:none;border:0;color:#555;cursor:pointer;padding:0 2px}
- #rate button.on{color:#ffd54f} #dislike{font-size:15px;padding:8px 12px;border-radius:10px;border:0;background:#4e342e;color:#fff;margin-left:12px;cursor:pointer}
+ #rate button.on{color:#ffd54f} #dislike{background:#4e342e !important}
  .chips button{font-size:14px;padding:8px 12px;border-radius:20px;border:1px solid #555;background:transparent;color:var(--txt);cursor:pointer}
  #themenow{display:none;margin-top:10px;padding:10px;border-radius:12px;background:#1b5e20;color:#fff}
  #themenow button{margin-left:10px;font-size:14px;padding:6px 10px;border-radius:8px;border:0;background:#fff;color:#1b5e20;cursor:pointer} #mic.on{background:var(--pink);animation:pulse 1s infinite}
@@ -1657,49 +1665,52 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
 <div id="players"><div id="p0"></div><div id="p1"></div></div>
 <div id="netdown">📡 The internet dropped. The DJ will carry on by itself as soon as it's back.</div>
 <div id="ui" hidden><div id="left">
- <div class="card"><div id="countdown"></div><div id="phase" style="color:var(--dim)"></div>
+ <div class="card" id="nowcard"><div id="countdown"></div><div id="phase" style="color:var(--dim)"></div>
   <div id="title">…</div><div id="artist"></div><div id="reqby"></div>
-  <div id="rate"><span class="rl">Stars:</span><button data-s="1">★</button><button data-s="2">★</button><button data-s="3">★</button><button data-s="4">★</button><button data-s="5">★</button>
-   <button id="dislike" title="Remove this song and play fewer like it">👎 Remove song</button></div><div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div></div>
- <div class="card" id="main"><div class="row">
-  <button class="big" id="stop">⏹ Stop music</button>
-  <button class="big" id="fullbtn">🎵 Play full song</button>
-  <button class="big" id="skip">⏭ Next song</button></div></div>
- <div class="card"><b>What to play</b>
-  <div class="row" style="margin-top:10px"><input id="themeq" placeholder="🎯 Play songs like… e.g. hit English dance songs 2000 to 2010" style="flex:1;min-width:220px">
+  <div id="voice"></div><div id="sing"></div><div id="bar"><div id="fill"></div></div>
+  <div id="main"><div class="row">
+   <button class="big" id="stop">⏹ Stop music</button>
+   <button class="big" id="fullbtn">🎵 Play full song</button>
+   <button class="big" id="skip">⏭ Next song</button></div></div>
+  <div id="rate"><span class="rl">Stars:</span><button data-s="1">★</button><button data-s="2">★</button><button data-s="3">★</button><button data-s="4">★</button><button data-s="5">★</button></div>
+  <div class="row small" style="margin-top:8px">
+   <button class="act" id="dislike" title="Remove this song and play fewer like it">👎 Remove song</button>
+   <button class="act" id="blk">🚫 Block this song</button>
+   <button class="act" id="blka">🚫 Block this artist</button></div></div>
+ <div class="card"><div class="sec">On the mic</div><div class="row">
+  <button class="act wide" id="hype" style="background:var(--pink)">🎤 Hype the crowd</button>
+  <button class="act wide" id="mute">🔇 DJ voice off</button>
+  <button class="act wide" id="tvbtn">📺 Big screen</button>
+  <button class="act wide" id="recapbtn">📜 Party recap</button></div></div>
+ <div class="card" id="djsetbox" hidden><div class="sec">🎧 DJ set <small>plays 15 minutes, or the whole song with 🎵 Play full song</small></div>
+  <div class="row" id="djset"></div></div>
+ <div class="card"><div class="sec">What to play</div>
+  <div class="row">
+   <button class="big pick" id="firebtn">🔥 Crescendo <small>5★ dance songs only</small></button>
+   <button class="act pick" id="slowbtn" style="background:#00838f">🐢 Slow songs</button>
+   <button class="act pick" id="oldbtn" style="background:#8d6e63">📻 Old songs</button>
+   <button class="act pick" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button></div>
+  <div class="sec">Language <small>none on = a mix of all three</small></div><div class="row">
+   <button class="lang" data-l="hi">Hindi</button><button class="lang" data-l="pa">Punjabi</button><button class="lang" data-l="en">English &amp; international</button></div>
+  <div class="sec">Vibe</div><div class="row">
+   <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
+   <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
+   <button class="mode" data-m="2" style="background:#00897b">🙂 Groove</button>
+   <button class="mode" data-m="3" style="background:#7cb342">💃 Dance</button>
+   <button class="mode" data-m="4" style="background:#fb8c00">🔥 Bangers</button>
+   <button class="mode" data-m="5" style="background:#e53935">🚀 On fire</button></div>
+  <div class="sec">Play songs like…</div>
+  <div class="row"><input id="themeq" placeholder="🎯 e.g. hit English dance songs 2000 to 2010" style="flex:1;min-width:220px">
    <button class="act" id="themeb" style="background:var(--pink)">Play these</button></div>
   <div class="row chips" style="margin-top:8px">
    <button data-q="Dance songs from Bollywood movies">Bollywood dance</button><button data-q="Hit dance songs of Punjabi singers">Punjabi hits</button>
    <button data-q="Hit English dance songs from 2000 to 2010">English 2000s dance</button><button data-q="Spanish and international party hits">Spanish &amp; international</button>
    <button data-q="90s Bollywood dance songs">90s Bollywood</button><button data-q="Diwali songs">🪔 Diwali songs</button></div>
   <div id="themenow"></div>
-  <div class="row" style="margin-top:10px">
-  <button class="big" id="firebtn">🔥 Crescendo <small>5★ dance songs only</small></button></div>
-  <div class="row" style="margin-top:10px">
-  <button class="lang" data-l="hi">Hindi</button><button class="lang" data-l="pa">Punjabi</button><button class="lang" data-l="en">English &amp; international</button>
-  <button class="act" id="oldbtn" style="background:#8d6e63">📻 Old songs</button>
-  <button class="act" id="slowbtn" style="background:#00838f">🐢 Slow songs</button>
-  <button class="act" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button></div>
-  <div style="color:var(--dim);font-size:13px;margin-top:6px">Tap a language to play only those songs. With none on, the DJ plays a mix of all three. Songs with 3 stars or fewer only play while 🐢 Slow songs is on.</div>
-  <div id="djsetbox" style="margin-top:14px" hidden><div style="color:var(--dim)">🎧 DJ set: each button plays that whole song now</div>
-  <div class="row" id="djset" style="margin-top:6px"></div></div>
-  <div style="margin-top:14px;color:var(--dim)">Or pick the vibe</div><div class="row" style="margin-top:6px">
-  <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
-  <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
-  <button class="mode" data-m="2" style="background:#00897b">🙂 Groove</button>
-  <button class="mode" data-m="3" style="background:#7cb342">💃 Dance</button>
-  <button class="mode" data-m="4" style="background:#fb8c00">🔥 Bangers</button>
-  <button class="mode" data-m="5" style="background:#e53935">🚀 On fire</button></div></div>
- <div class="card"><b>Request a song</b><div style="margin-top:10px">
+  <div style="color:var(--dim);font-size:13px;margin-top:10px">Songs with 3 stars or fewer only play while 🐢 Slow songs is on.</div></div>
+ <div class="card"><div class="sec">Request a song</div><div class="row">
   <button class="act" id="mic" title="Say the song name">🎙 Speak</button>
-  <input id="req" placeholder="Song name - Artist"> <button class="act" id="reqb">Add</button></div></div>
- <div class="card row">
-  <button class="act" id="mute">🔇 DJ voice off</button>
-  <button class="act" id="hype">🎤 Hype the crowd</button>
-  <button class="act" id="tvbtn">📺 Big screen</button>
-  <button class="act" id="recapbtn">📜 Party recap</button>
-  <button class="act" id="blk">🚫 Block this song</button>
-  <button class="act" id="blka">🚫 Block this artist</button></div>
+  <input id="req" placeholder="Song name - Artist" style="flex:1;min-width:200px"> <button class="act" id="reqb">Add</button></div></div>
  <div class="card" id="camcard"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;justify-content:center">
   <div style="flex:1;min-width:240px"><div style="font-size:22px;font-weight:700">📷 Crowd camera</div>
    <div id="camlabel" style="font-size:26px;font-weight:700;margin:10px 0;color:var(--pink)">Off</div>
@@ -1732,7 +1743,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
  <button class="mode" style="background:#e53935" onclick="score(5)">5<br><small>on fire</small></button></div></div>
 </main>
 <script>
-const FADE = __FADE__, PREP = 25;
+const FADE = __FADE__, PREP = 25, STUCK = 7000;   // a song that doesn't move for 7 s is skipped
 // Sound controls (kept on this computer between runs).
 const SOUND = Object.assign({music: 100, voice: 100, duck: 22}, (()=>{ try { return JSON.parse(localStorage.getItem('dj-sound')||'{}'); } catch(e){ return {}; } })());
 let DUCK = SOUND.duck, pendingForce = false;
@@ -1819,7 +1830,8 @@ async function next(err){
       await Promise.all(fades);
     }
     if(target===DUCK){ for(const a of t.announce){ $('voice').textContent='🎤 '+a.text; await playAudio(a.url);} $('voice').textContent=''; ramp(p, DUCK, 100, 1.5); }
-  } catch(e){ console.log(e); retryLater(); } finally { busy=false; }
+  } catch(e){ console.log(e); retryLater(); } finally { busy=false;
+    if(brokenWait){ brokenWait = false; setTimeout(skipBroken, 0); } }
 }
 // ---- Safety net: never go quiet ----
 let errs = [], down = false, lastT = -1, lastMove = Date.now();
@@ -1828,9 +1840,11 @@ function retryLater(){   // the DJ program didn't answer: try again shortly, unl
     if(!busy && !stopped && !playing && !upcoming) next(false); }, 3000);
 }
 function netDown(on){ down = on; $('netdown').style.display = on ? 'block' : 'none'; }
-function skipBroken(){   // a song won't play: skip it, unless it looks like the internet is down
-  const now = Date.now(); errs = errs.filter(x => now - x < 30000); errs.push(now);
-  if(errs.length >= 3 || !navigator.onLine){ if(!down){ netDown(true); if(cur) post('/putback?v='+cur.vid).catch(()=>{}); } return; }
+let brokenWait = false;
+function skipBroken(){   // a song won't play (not found, blocked, glitch): the next song, straight away
+  if(busy){ brokenWait = true; return; }   // it broke while the mix was still running: right after it
+  const now = Date.now(); errs = errs.filter(x => now - x < 20000); errs.push(now);
+  if(errs.length >= 5 || !navigator.onLine){ if(!down){ netDown(true); if(cur) post('/putback?v='+cur.vid).catch(()=>{}); } return; }
   next(true);
 }
 setInterval(()=>{   // while the internet is down, try again every 10 seconds
@@ -1845,7 +1859,7 @@ setInterval(()=>{   // the DJ's ear: when to fetch the next song and when to mix
   const t=p.getCurrentTime(), d=p.getDuration()||0, end=Math.min(cur.until, d ? d-0.5 : cur.until), left=end-t;
   if(d) $('fill').style.width=Math.min(100,100*(t-cur.start)/Math.max(1,end-cur.start))+'%';
   if(Math.abs(t - lastT) > 0.05){ lastT = t; lastMove = Date.now(); }
-  else if(Date.now() - lastMove > 15000 && !down){   // stuck for 15 s: move on
+  else if(Date.now() - lastMove > STUCK && !down){   // stuck: move on to the next song
     lastMove = Date.now(); if(navigator.onLine){ toast('That song got stuck, moving on'); next(true); } else netDown(true); return; }
   if(sayQ.length && !talking && !singing){ talking = true; const list = sayQ.splice(0); talk(list, p).finally(()=>{ talking = false; }); }
   if(cur.karaoke && cur.karaoke.length){   // karaoke: show the line being sung, and the next one
@@ -2062,7 +2076,7 @@ $('slowbtn').onclick = async ()=>{ $('slowbtn').disabled = true;
 async function djSet(){   // the numbered DJ set buttons, named once YouTube has told us the titles
   try { const r = await (await fetch('/api/djset')).json();
     $('djsetbox').hidden = !r.songs.length;
-    $('djset').innerHTML = r.songs.map(s => `<button class="act djs" data-n="${s.n}" style="background:#1565c0;min-width:64px" title="${esc(s.title)}"><b style="font-size:22px">${s.n}</b><br><small>${esc(s.title)}</small></button>`).join('');
+    $('djset').innerHTML = r.songs.map(s => `<button class="act djs" data-n="${s.n}" style="background:#1565c0">${s.n}</button>`).join('');
     document.querySelectorAll('.djs').forEach(b => b.onclick = async ()=>{ b.disabled = true;
       try { const r = await post('/djset?v='+b.dataset.n); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
       b.disabled = false; });

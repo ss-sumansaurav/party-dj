@@ -1,5 +1,5 @@
 # Suman's DJ set (2026-11-06): each link gets a numbered button on the DJ page ("🎧 DJ set"),
-# and pressing it plays that whole song straight away. Add or remove lines to change the buttons.
+# and pressing it plays that song straight away for 15 minutes (all of it with "Play full song"). Add or remove lines to change the buttons.
 songs:
   - https://youtu.be/2wTLIQOn44E
   - https://youtu.be/BP9Ub7GkOEQ

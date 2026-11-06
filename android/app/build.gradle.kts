@@ -12,8 +12,8 @@ android {
         applicationId = "com.party.dj"
         minSdk = 24
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.9"
+        versionCode = 13
+        versionName = "1.10"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")   // TVs often run 32-bit ARM
         }
