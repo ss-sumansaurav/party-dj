@@ -35,9 +35,8 @@ def ask(question: str) -> bool:
         return False
 
 
-def choose_party() -> str | None:
-    """No party file given: ask which party (each set up with --setup), or set up a new one.
-    Returns the file, or None to set up a new party."""
+def party_files() -> list[tuple[str, str]]:
+    """Every party set up here, newest first: (file, "Name, date")."""
     from partydj import event
 
     files = sorted(Path(".").glob("party-*.yaml"), key=lambda f: f.stat().st_mtime, reverse=True)
@@ -50,6 +49,13 @@ def choose_party() -> str | None:
         except (ConfigError, OSError):
             continue
         parties.append((str(f), f"{event.title(cfg)}, {cfg.party_date}"))
+    return parties
+
+
+def choose_party() -> str | None:
+    """No party file given: ask which party (each set up with --setup), or set up a new one.
+    Returns the file, or None to set up a new party."""
+    parties = party_files()
     if not parties:
         return None
     print("Which party?")
@@ -339,7 +345,8 @@ def cmd_party(cfg, args) -> int:
         resume = None
         if saved and saved.get("started"):
             played = len(saved.get("history", []))
-            if ask(f"The DJ stopped a few minutes ago after {played} songs. Pick up where it left off?"):
+            if getattr(args, "app", False) or ask(
+                    f"The DJ stopped a few minutes ago after {played} songs. Pick up where it left off?"):
                 resume = saved
         live.run(cfg, yt, plan, link, args.config, args.songs, resume=resume)
     except KeyboardInterrupt:
@@ -458,12 +465,26 @@ def main(argv=None) -> int:
     mode.add_argument("--test", action="store_true", help="dry run before the party")
     mode.add_argument("--songs", dest="songs_page", action="store_true", help="see, add or remove party songs")
     mode.add_argument("--live", action="store_true", help="same as no option: run the party")
+    p.add_argument("--app", action="store_true",
+                   help="started by the Party DJ Mac app: no questions (plays without signing in, "
+                        "and carries on a party that stopped in the last 30 minutes)")
+    mode.add_argument("--list-parties", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--no-sign-in", action="store_true",
                    help="play without a YouTube account (everything works; no playlist is saved)")
     mode.add_argument("--voice-pack", action="store_true", help="record the DJ's lines in a human voice (ElevenLabs)")
     args = p.parse_args(argv)
     if args.setup:
         return cmd_setup(args)
+    if args.list_parties:   # for the Mac app: one party per line, "file<TAB>name"
+        for f, name in party_files():
+            print(f"{f}\t{name}")
+        return 0
+    if args.app:
+        args.no_sign_in = True
+        import signal   # the app runs the DJ in the background, where Stop must still end it neatly
+
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        signal.signal(signal.SIGTERM, signal.default_int_handler)
     if args.config is None:
         args.config = choose_party()
         if args.config is None:
