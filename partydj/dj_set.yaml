@@ -1,0 +1,11 @@
+# Suman's DJ set (2026-11-06): each link gets a numbered button on the DJ page ("🎧 DJ set"),
+# and pressing it plays that whole song straight away. Add or remove lines to change the buttons.
+songs:
+  - https://youtu.be/2wTLIQOn44E
+  - https://youtu.be/BP9Ub7GkOEQ
+  - https://youtu.be/bIbn_OV36F4
+  - https://youtu.be/iSO4OErJT7U
+  - https://youtu.be/uejopfQIZSo
+  - https://youtu.be/erkzPWQeESQ
+  - https://www.youtube.com/watch?v=v_InUarWeNA
+  - https://www.youtube.com/watch?v=ETsmAnCfY68

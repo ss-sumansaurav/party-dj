@@ -45,6 +45,34 @@ STATE_FILE = Path(".cache/party_state.json")  # where the party is up to, for pi
 RECAP_FILE = Path("party_recap.html")
 WISH_MAX = 140                 # characters in a guest's birthday wish
 WISHES_PER_PHONE = 5
+SLOW_MAX = 3   # Suman: songs with 3 stars or fewer only play when the Slow songs button is on
+DJ_SET_FILE = Path(__file__).parent / "dj_set.yaml"
+
+
+def video_id(link: str) -> str | None:
+    """The video id in a YouTube link (youtu.be/ID, watch?v=ID, or a bare id)."""
+    link = str(link).strip()
+    m = re.search(r"(?:youtu\.be/|[?&]v=|/shorts/|/embed/)([A-Za-z0-9_-]{11})", link) or re.fullmatch(r"([A-Za-z0-9_-]{11})", link)
+    return m.group(1) if m else None
+
+
+def load_dj_set() -> list[Song]:
+    try:
+        import yaml
+
+        links = (yaml.safe_load(DJ_SET_FILE.read_text(encoding="utf-8")) or {}).get("songs") or []
+    except (OSError, ValueError):
+        return []
+    out = []
+    for i, link in enumerate(links, 1):
+        vid = video_id(link)
+        if vid:
+            s = Song(f"DJ set {i}", "", "en", "", 5)
+            s.video_id = vid
+            out.append(s)
+    return out
+
+
 RECORDED_ONLY = True   # announcements come only from partydj/voice_pack; no recording = the DJ stays quiet
 TIER_LINES = {1: "Wind-down", 2: "Warm-up", 3: "Build", 4: "Peak", 5: "Peak 2", FIRE: "Peak 2"}
 
@@ -193,6 +221,9 @@ class Director:
         self._search_yt = None                # signed-out client just for guest searches
         self.last_karaoke = -3600.0
         self.old_mode = False   # the "Old songs" button: only the songs marked old play
+        self.slow_mode = False  # the "Slow songs" button: only the 3-star-or-less songs play
+        self.dj_set = load_dj_set()   # the numbered "DJ set" buttons: each plays one whole song
+        self.dj_set_named = False
         self.langs: set[str] = set()   # the Hindi / English / Punjabi buttons; empty = every language
         self.theme: dict | None = None    # the "Play songs like…" box: what the host typed, read by theme.parse
         self.theme_extra: set[str] = set()  # songs brought in from a YouTube Music playlist for it
@@ -248,6 +279,7 @@ class Director:
 
     def prepare(self):
         """Make the fixed announcements before the party starts, and look up mix points."""
+        threading.Thread(target=self.name_dj_set, daemon=True).start()
         def warm():
             for s in self.plan.songs + self.plan.reserve:
                 if s.video_id:
@@ -289,7 +321,7 @@ class Director:
         """Songs the DJ may pick by itself: old songs only while the Old songs button is on,
         and only the languages picked with the language buttons."""
         return self.playable(s) and not s.old and self.lang_ok(s) and not self.avoided(s) \
-            and "theme" not in s.tags
+            and "theme" not in s.tags and s.energy > SLOW_MAX
 
     def avoided(self, s: Song) -> bool:
         """A singer the host gave a 👎 to isn't picked again (a request still plays)."""
@@ -360,8 +392,13 @@ class Director:
             song = self.theme_pick()
             if song:
                 return song, "theme"
+        if self.slow_mode:
+            slow = [s for s in self.everything if s.energy <= SLOW_MAX and s.energy > 1 and self.playable(s)
+                    and self.lang_ok(s) and not self.avoided(s)]
+            if slow:
+                return self.lean(self.order(slow)), "slow"
         if self.old_mode:
-            olds = [s for s in self.everything if s.old and self.playable(s) and self.lang_ok(s)]
+            olds = [s for s in self.everything if s.old and s.energy > SLOW_MAX and self.playable(s) and self.lang_ok(s)]
             if olds:
                 return self.lean(olds), "old"
         if self.one_shot_tier:
@@ -372,7 +409,7 @@ class Director:
         song = self.pick_by_tier(self.mode) if self.mode != "auto" else self.pick_auto()
         return song or self.encore(), None
 
-    def encore(self, energy: int = 3) -> Song | None:
+    def encore(self, energy: int = SLOW_MAX + 1) -> Song | None:
         """Every song has played: rather than going quiet, bring back the night's favourites
         (most 👍, then requested), never one of the last 40."""
         recent = {h["key"] for h in self.history[-40:]}
@@ -438,7 +475,7 @@ class Director:
                 reason = reason or why
                 while self.inserts and not self.playable(self.inserts[0][0]):
                     self.inserts.pop(0)
-                if why in ("request", "karaoke"):
+                if why in ("request", "karaoke", "djset"):
                     self.inserts.pop(0)
                 elif why == "guest":
                     r = self.guest_reqs.pop(song.key)
@@ -522,6 +559,9 @@ class Director:
                 if hook and hook[0] > 8:
                     start = int(hook[0] - 4)
             play, fade = cuts.best_play(song.full_length, start, lines, lo, hi, self.cfg.crossfade_seconds)
+            if reason == "djset":   # the DJ set buttons: the whole song, from the very start
+                start, fade = 0, self.cfg.crossfade_seconds
+                play = song.seconds or 3600   # the page moves on when the song ends
             if reason == "birthday" and song is self.happy_birthday():
                 start, fade = 0, self.cfg.crossfade_seconds
                 play = min(song.full_length, self.cfg.happy_birthday_play_seconds)
@@ -750,7 +790,7 @@ class Director:
         with self.lock:
             self.mode = int(mode) if mode in ("1", "2", "3", "4", "5") else FIRE if mode == FIRE else "auto"
             if self.mode == FIRE:
-                self.old_mode = False
+                self.old_mode = self.slow_mode = False
                 self.theme = None
                 left = sum(1 for s in self.everything if s.energy == 5 and self.auto_ok(s))
         if self.mode == FIRE:
@@ -803,7 +843,7 @@ class Director:
             self.theme, self.theme_extra = spec, set()
             if self.mode == FIRE:
                 self.mode = "auto"
-            self.old_mode = False
+            self.old_mode = self.slow_mode = False
             local = sum(1 for s in self.everything if self.playable(s) and spec["understood"] and theme.fits(spec, s))
         reading = theme.describe(spec)
         if local < 15:
@@ -1068,13 +1108,56 @@ class Director:
             if on and self.mode == FIRE:
                 self.mode = "auto"
             if on:
-                self.theme = None
+                self.theme, self.slow_mode = None, False
             left = sum(1 for s in self.everything if s.old and self.playable(s))
         if on:
             self.notice(f"📻 Old songs ON: {left} old songs left to play.")
             return {"on": True, "msg": f"📻 Old songs on ({left} left). Tap again to go back."}
         self.notice("📻 Old songs OFF: back to the party mix.")
         return {"on": False, "msg": "Back to the party mix"}
+
+    def slow_toggle(self) -> dict:
+        with self.lock:
+            self.slow_mode = not self.slow_mode
+            on = self.slow_mode
+            if on:
+                self.old_mode, self.theme = False, None
+                if self.mode == FIRE:
+                    self.mode = "auto"
+            left = sum(1 for s in self.everything if 1 < s.energy <= SLOW_MAX and self.playable(s))
+        if on:
+            self.notice(f"🐢 Slow songs ON: {left} slow songs left to play.")
+            return {"on": True, "msg": f"🐢 Slow songs on ({left} left). Tap again to go back."}
+        self.notice("🐢 Slow songs OFF: back to the party mix.")
+        return {"on": False, "msg": "Back to the party mix"}
+
+    def name_dj_set(self):
+        """Fill in each DJ set song's real name and length from YouTube (once, in the background)."""
+        for s in self.dj_set:
+            try:
+                d = self.yt.get_song(s.video_id).get("videoDetails", {})
+                s.title = d.get("title") or s.title
+                s.artist = d.get("author") or ""
+                s.seconds = int(d["lengthSeconds"]) if d.get("lengthSeconds") else None
+            except Exception:
+                pass
+        self.dj_set_named = True
+
+    def dj_set_list(self) -> list[dict]:
+        return [{"n": i, "title": s.title} for i, s in enumerate(self.dj_set, 1)]
+
+    def dj_set_now(self, n: str) -> str:
+        """A DJ set button: that song, whole, straight away."""
+        try:
+            song = self.dj_set[int(n) - 1]
+        except (ValueError, IndexError):
+            return "There's no song on that button."
+        with self.lock:
+            self.played.discard(song.key)
+            self.inserts = [(s, w) for s, w in self.inserts if w != "djset"]
+            self.inserts.insert(0, (song, "djset"))
+        self.notice(f"🎧 DJ set {n}: '{song.title}' is playing now, the whole song.")
+        return f"🎧 DJ set {n}: {song.title}"
 
     def karaoke_now(self) -> str:
         """The karaoke button: one of the karaoke songs, straight away, with the words on screen."""
@@ -1233,7 +1316,7 @@ class Director:
             force, self.force_next = self.force_next, False
             return {
                 "mode": self.mode, "notices": self.notices, "vibe_due": self.vibe_due,
-                "scores": self.scores[-6:], "force_next": force, "old_mode": self.old_mode,
+                "scores": self.scores[-6:], "force_next": force, "old_mode": self.old_mode, "slow_mode": self.slow_mode,
                 "langs": sorted(self.langs), "theme": self.theme_view(), "dislikes": len(self.dislikes),
                 "birthday": self.birthday_at.strftime("%I:%M %p").lstrip("0") if self.birthday_at else None,
                 "started": bool(self.started), "phase": self.phase_now() if self.started else None,
@@ -1330,6 +1413,8 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return self._json(director.state())
             if u.path == "/tv":
                 return self._send(200, tv_page.encode())
+            if u.path == "/api/djset":
+                return self._json({"songs": director.dj_set_list(), "named": director.dj_set_named})
             if u.path == "/api/tv":
                 return self._json(director.tv_state())
             if u.path == "/recap":
@@ -1368,6 +1453,10 @@ def serve(director: Director, songbook: Songbook, public: bool = True) -> str:
                 return self._json({"ok": True})
             if u.path == "/old":
                 return self._json(director.old_toggle())
+            if u.path == "/slow":
+                return self._json(director.slow_toggle())
+            if u.path == "/djset":
+                return self._json({"msg": director.dj_set_now(arg)})
             if u.path == "/lang":
                 return self._json(director.lang_toggle(arg))
             if u.path == "/theme":
@@ -1589,8 +1678,11 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
   <div class="row" style="margin-top:10px">
   <button class="lang" data-l="hi">Hindi</button><button class="lang" data-l="pa">Punjabi</button><button class="lang" data-l="en">English &amp; international</button>
   <button class="act" id="oldbtn" style="background:#8d6e63">📻 Old songs</button>
+  <button class="act" id="slowbtn" style="background:#00838f">🐢 Slow songs</button>
   <button class="act" id="karabtn" style="background:#6a1b9a">🎤 Karaoke</button></div>
-  <div style="color:var(--dim);font-size:13px;margin-top:6px">Tap a language to play only those songs. With none on, the DJ plays a mix of all three.</div>
+  <div style="color:var(--dim);font-size:13px;margin-top:6px">Tap a language to play only those songs. With none on, the DJ plays a mix of all three. Songs with 3 stars or fewer only play while 🐢 Slow songs is on.</div>
+  <div id="djsetbox" style="margin-top:14px" hidden><div style="color:var(--dim)">🎧 DJ set: each button plays that whole song now</div>
+  <div class="row" id="djset" style="margin-top:6px"></div></div>
   <div style="margin-top:14px;color:var(--dim)">Or pick the vibe</div><div class="row" style="margin-top:6px">
   <button class="mode" data-m="auto" style="background:#455a64">🤖 Auto</button>
   <button class="mode" data-m="1" style="background:#3949ab">😌 Chill</button>
@@ -1843,6 +1935,8 @@ async function load(){
     showStars();
     $('firebtn').innerHTML = s.mode === 'fire' ? '🔥 Crescendo: ON <small>tap to go back to the normal mix</small>' : '🔥 Crescendo <small>5★ dance songs only</small>';
     document.querySelectorAll('.lang').forEach(b => b.classList.toggle('on', (s.langs||[]).includes(b.dataset.l)));
+    $('slowbtn').textContent = s.slow_mode ? '🐢 Slow songs: ON' : '🐢 Slow songs';
+    $('slowbtn').style.background = s.slow_mode ? '#2e7d32' : '#00838f';
     $('oldbtn').textContent = s.old_mode ? '📻 Old songs: ON' : '📻 Old songs';
     $('oldbtn').style.background = s.old_mode ? '#2e7d32' : '#8d6e63';
     offerSing(s.singalong);
@@ -1962,6 +2056,19 @@ $('fullbtn').onclick = ()=>{ if(!cur) return; cur.until = 1e9;   // play to the 
 $('karabtn').onclick = async ()=>{ $('karabtn').disabled = true;
   try { const r = await post('/karaoke'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
   $('karabtn').disabled = false; };
+$('slowbtn').onclick = async ()=>{ $('slowbtn').disabled = true;
+  try { const r = await post('/slow'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
+  $('slowbtn').disabled = false; };
+async function djSet(){   // the numbered DJ set buttons, named once YouTube has told us the titles
+  try { const r = await (await fetch('/api/djset')).json();
+    $('djsetbox').hidden = !r.songs.length;
+    $('djset').innerHTML = r.songs.map(s => `<button class="act djs" data-n="${s.n}" style="background:#1565c0;min-width:64px" title="${esc(s.title)}"><b style="font-size:22px">${s.n}</b><br><small>${esc(s.title)}</small></button>`).join('');
+    document.querySelectorAll('.djs').forEach(b => b.onclick = async ()=>{ b.disabled = true;
+      try { const r = await post('/djset?v='+b.dataset.n); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
+      b.disabled = false; });
+    if(!r.named) setTimeout(djSet, 5000);
+  } catch(e){ setTimeout(djSet, 5000); } }
+djSet();
 $('oldbtn').onclick = async ()=>{ $('oldbtn').disabled = true;
   try { const r = await post('/old'); toast(r.msg); await karaNow(); load(); } catch(e){ $('down').style.display='block'; }
   $('oldbtn').disabled = false; };
